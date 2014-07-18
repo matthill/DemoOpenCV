@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<Num_Of_Class>10</Num_Of_Class>
+<Hog_WinSize>
+  <width>18</width>
+  <height>36</height></Hog_WinSize>
+<Hog_BlockSize>
+  <width>18</width>
+  <height>18</height></Hog_BlockSize>
+<Hog_blockStride>
+  <width>1</width>
+  <height>6</height></Hog_blockStride>
+<Hog_cellSize>
+  <width>9</width>
+  <height>9</height></Hog_cellSize>
+<WinStride>
+  <width>1</width>
+  <height>1</height></WinStride>
+<padding>
+  <width>0</width>
+  <height>0</height></padding>
+<class_0>
+  <file_name>model_0_vsAll.dat</file_name>
+  <label>"0"</label></class_0>
+<class_1>
+  <file_name>model_1_vsAll.dat</file_name>
+  <label>"1"</label></class_1>
+<class_2>
+  <file_name>model_2_vsAll.dat</file_name>
+  <label>"2"</label></class_2>
+<class_3>
+  <file_name>model_3_vsAll.dat</file_name>
+  <label>"3"</label></class_3>
+<class_4>
+  <file_name>model_4_vsAll.dat</file_name>
+  <label>"4"</label></class_4>
+<class_5>
+  <file_name>model_5_vsAll.dat</file_name>
+  <label>"5"</label></class_5>
+<class_6>
+  <file_name>model_6_vsAll.dat</file_name>
+  <label>"6"</label></class_6>
+<class_7>
+  <file_name>model_7_vsAll.dat</file_name>
+  <label>"7"</label></class_7>
+<class_8>
+  <file_name>model_8_vsAll.dat</file_name>
+  <label>"8"</label></class_8>
+<class_9>
+  <file_name>model_9_vsAll.dat</file_name>
+  <label>"9"</label></class_9>
+</opencv_storage>

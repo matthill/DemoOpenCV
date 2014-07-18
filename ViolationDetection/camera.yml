@@ -1,0 +1,37 @@
+%YAML:1.0
+count: 1
+camera-0:
+   Video: "D:\\shared\\Video\\vlc-record-2014-06-29-10h28m13s-rtsp___169.254.150.113.mp4"
+   CameraID: "CAM-01"
+   Algorithm: "FTSAlgorithm.LaneViolation"
+   ParamFile: "D:\\shared\\Video\\vlc-record-2014-06-27-18h48m19s-113.yml"
+   OutputFolder: "D:\\vs2013\\output\\"
+   NetMapFolder: "\\\\10.88.36.24\\output\\"
+camera-1:
+   Video: "D:\\vs2013\\sample\\VanThanh-2014-04-29.mp4"
+   CameraID: "CAM-02"
+   Algorithm: "FTSAlgorithm.RedSignalViolation"
+   ParamFile: "redsignal_violation_2.yml"
+   OutputFolder: "D:\\vs2013\\output\\"
+   NetMapFolder: "\\\\10.88.36.24\\output\\"
+camera-2: 
+   Video: "D:\\vs2013\\sample\\conghoa-20131004-0906_720P_inverse_3.avi"
+   CameraID: "CAM-03"
+   Algorithm: "FTSAlgorithm.LaneViolation"
+   ParamFile: "lane_violation_3.yml"
+   OutputFolder: "D:\\vs2013\\output\\"
+   NetMapFolder: "\\\\10.88.36.24\\output\\"
+camera-3:
+   Video: "D:\\vs2013\\sample\\conghoa-20131004-0906_720P_inverse_4.avi"
+   CameraID: "CAM-04"
+   Algorithm: "FTSAlgorithm.LaneViolation"
+   ParamFile: "lane_violation_4.yml"
+   OutputFolder: "D:\\vs2013\\output\\"
+   NetMapFolder: "\\\\10.88.36.24\\output\\"
+camera-4:
+   Video: "D:\\vs2013\\sample\\conghoa-20131004-0906_720P_inverse_5.avi"
+   CameraID: "CAM-05"
+   Algorithm: "FTSAlgorithm.LaneViolation"
+   ParamFile: "lane_violation_5.yml"
+   OutputFolder: "D:\\vs2013\\output\\"
+   NetMapFolder: "\\\\10.88.36.24\\output\\"

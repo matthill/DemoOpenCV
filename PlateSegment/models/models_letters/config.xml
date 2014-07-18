@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<Num_Of_Class>21</Num_Of_Class>
+<Hog_WinSize>
+  <width>18</width>
+  <height>36</height></Hog_WinSize>
+<Hog_BlockSize>
+  <width>18</width>
+  <height>18</height></Hog_BlockSize>
+<Hog_blockStride>
+  <width>1</width>
+  <height>6</height></Hog_blockStride>
+<Hog_cellSize>
+  <width>9</width>
+  <height>9</height></Hog_cellSize>
+<WinStride>
+  <width>1</width>
+  <height>1</height></WinStride>
+<padding>
+  <width>0</width>
+  <height>0</height></padding>
+<class_0>
+  <file_name>model_A_vsAll.dat</file_name>
+  <label>A</label></class_0>
+<class_1>
+  <file_name>model_B_vsAll.dat</file_name>
+  <label>B</label></class_1>
+<class_2>
+  <file_name>model_C_vsAll.dat</file_name>
+  <label>C</label></class_2>
+<class_3>
+  <file_name>model_D_vsAll.dat</file_name>
+  <label>D</label></class_3>
+<class_4>
+  <file_name>model_E_vsAll.dat</file_name>
+  <label>E</label></class_4>
+<class_5>
+  <file_name>model_F_vsAll.dat</file_name>
+  <label>F</label></class_5>
+<class_6>
+  <file_name>model_G_vsAll.dat</file_name>
+  <label>G</label></class_6>
+<class_7>
+  <file_name>model_H_vsAll.dat</file_name>
+  <label>H</label></class_7>
+<class_8>
+  <file_name>model_K_vsAll.dat</file_name>
+  <label>K</label></class_8>
+<class_9>
+  <file_name>model_L_vsAll.dat</file_name>
+  <label>L</label></class_9>
+<class_10>
+  <file_name>model_M_vsAll.dat</file_name>
+  <label>M</label></class_10>
+<class_11>
+  <file_name>model_N_vsAll.dat</file_name>
+  <label>N</label></class_11>
+<class_12>
+  <file_name>model_P_vsAll.dat</file_name>
+  <label>P</label></class_12>
+<class_13>
+  <file_name>model_R_vsAll.dat</file_name>
+  <label>R</label></class_13>
+<class_14>
+  <file_name>model_S_vsAll.dat</file_name>
+  <label>S</label></class_14>
+<class_15>
+  <file_name>model_T_vsAll.dat</file_name>
+  <label>T</label></class_15>
+<class_16>
+  <file_name>model_U_vsAll.dat</file_name>
+  <label>U</label></class_16>
+<class_17>
+  <file_name>model_V_vsAll.dat</file_name>
+  <label>V</label></class_17>
+<class_18>
+  <file_name>model_X_vsAll.dat</file_name>
+  <label>X</label></class_18>
+<class_19>
+  <file_name>model_Y_vsAll.dat</file_name>
+  <label>Y</label></class_19>
+<class_20>
+  <file_name>model_Z_vsAll.dat</file_name>
+  <label>Z</label></class_20>
+</opencv_storage>

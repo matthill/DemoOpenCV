@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<params>
+  <name>FTSAlgorithm.LaneViolation</name>
+  <bDebug>1</bDebug>
+  <fMaxLearningRate>4.9999998882412910e-003</fMaxLearningRate>
+  <fScaleRatio>3.0000001192092896e-001</fScaleRatio>
+  <fVarThreshold>50.</fVarThreshold>
+  <iBikeMaxSize>30000000</iBikeMaxSize>
+  <iBikeMinSize>25000</iBikeMinSize>
+  <iCarMaxSize>20000</iCarMaxSize>
+  <iCarMinSize>3000</iCarMinSize>
+  <iContourMaxArea>1000000</iContourMaxArea>
+  <iContourMinArea>3000</iContourMinArea>
+  <iHistory>10</iHistory>
+  <iInterval>60</iInterval>
+  <iTrainingFrame>600</iTrainingFrame>
+  <strRoiBikeImg>D:\vs2013\sample\CH_bike_lane.png</strRoiBikeImg>
+  <strRoiCarImg>D:\vs2013\sample\CH_car_lane.png</strRoiCarImg>
+  <strRoiImg>D:\vs2013\sample\CH_whole.png</strRoiImg>
+  <strVideoSrc>D:\vs2013\sample\conghoa-20131004-0906_720P_inverse.avi</strVideoSrc></params>
+</opencv_storage>

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<Num_Of_Class>1</Num_Of_Class>
+<Hog_WinSize>
+  <width>18</width>
+  <height>36</height></Hog_WinSize>
+<Hog_BlockSize>
+  <width>18</width>
+  <height>18</height></Hog_BlockSize>
+<Hog_blockStride>
+  <width>1</width>
+  <height>6</height></Hog_blockStride>
+<Hog_cellSize>
+  <width>9</width>
+  <height>9</height></Hog_cellSize>
+<WinStride>
+  <width>1</width>
+  <height>1</height></WinStride>
+<padding>
+  <width>0</width>
+  <height>0</height></padding>
+<class_0>
+  <file_name>model_9_B.dat</file_name>
+  <label>"9_B"</label></class_0>
+</opencv_storage>
