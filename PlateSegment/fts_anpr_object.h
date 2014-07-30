@@ -2,6 +2,7 @@
 #define _FTS_ANPR_OBJECT_H
 
 #include "fts_base_externals.h"
+#include "fts_ip_simpleblobdetector.h"
 
 #define SKIP_CHAR '~'
 
@@ -132,49 +133,55 @@ public:
     FTS_ANPR_OBJECT();
     virtual ~FTS_ANPR_OBJECT();
 	
-	Rect plateRect;								//candidate plate region
-
 	Mat oPlate;									//plate image original source => gray
 	Mat oSrcRotated;							//plate image after rotated	: gray
-
 	Mat oLinesImg;								//Line segment detection result => srcRotated no padded
-
-	int nMedianBlobWidth;
-	int nMedianBlobHeight;
-	double rMediaBlobOtsu;
 	Mat oMedOtsuThreshBinImg;					//srcRotated no padded
-
 	Mat oLines;									//color, srcRotated, no padded top & bottom lines & mask
-
-	int nAdjustedMinX, nAdjustedMaxX;
-
-	vector<Mat> allHistograms;					//srcRotated no padded
-	
 	Mat oFirstBlobImg;											//srcRotated no padded
 	Mat oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg;		//srcRotated no padded
 	Mat otsuHistByMean;							//300,255
 	Mat oTestEmptyBlob;							//srcRotated COLOR
 	Mat oCleanCharBin;							//srcPadded	GRAY
 	Mat oFindMiddleCut;							//srcPadded	GRAY
+	Mat oOverviewDebugImg;
+	Mat oOverviewDebugImg_Resized;	// DV: 28/06/2014 - resized
 
-	vector<Rect> oBestCharBoxes;		//cal srcPadded
-	vector<int>	oCharPosLine;			//29.06 trungnt1 add to specify line property of char segment boxes
-	vector<Mat> oBestBinImages;			//srcPadded
+	FTS_BASE_LineSegment middleLine;
 
-	OcrResult ocrResults;					//single char ocr results from tesseract
-	vector<FTS_ANPR_PPResult> ppResults;	//plate ocr results after post processing
-	const vector<FTS_ANPR_PPResult>& getResults();
+	int nMedianBlobWidth;
+	int nMedianBlobHeight;
+	double rMediaBlobOtsu;
+	int nMinX, nMaxX;
+	int nAdjustedMinX, nAdjustedMaxX;
 
 	long long lPlateDetectTime;
 	long long lPlateSegmentTime;
 	long long lPlateOcrTime;
+	double rCropTime;
+	double rRotateTime;
+	double rFindMiddleCutTime;
+	double rDoSegmentTime;
+
+	Rect plateRect;								//candidate plate region
+	Rect oTopLineMiddleGapBB;
+	vector<Mat> allHistograms;					//srcRotated no padded
+	vector<Rect> oBestCharBoxes;		//cal srcPadded
+	vector<int>	oCharPosLine;			//29.06 trungnt1 add to specify line property of char segment boxes
+	vector<Mat> oBestBinImages;			//srcPadded
 
 	// DV: 23/06/2014 - more debug info
 	vector<Mat> rawBins;
 	vector< vector<Rect> > charRegions2D;
 
-	Mat oOverviewDebugImg;
-	Mat oOverviewDebugImg_Resized;	// DV: 28/06/2014 - resized
+	// DV: 21/07/2014 - store removed noises that can be reconsidered later
+	vector< FTS_IP_SimpleBlobDetector::SimpleBlob > oReservedNoisyBlobs;
+
+	OcrResult ocrResults;					//single char ocr results from tesseract
+	vector<FTS_ANPR_PPResult> ppResults;	//plate ocr results after post processing
+	const vector<FTS_ANPR_PPResult>& getResults();
+
+	// Functions
 	void createOverviewDebugImg();
 
 	void write(std::string strOutputFolder, std::string strDeviceID, time_t timer, std::string frameID);

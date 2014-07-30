@@ -19,7 +19,9 @@ public:
 	size_t track_id;
 	size_t skipped_frames;
 	Point2d prediction;
-	
+
+	bool isHavePlate;
+	cv::Mat imgPlate;
 	TKalmanFilter* KF;
 	CTrack(Point2f p, float dt, float Accel_noise_mag);
 	~CTrack();
@@ -47,6 +49,7 @@ public:
 	CTracker(float _dt, float _Accel_noise_mag, double _dist_thres = 60, double _cos_thres = -0.5, int _maximum_allowed_skipped_frames = 10, int _max_trace_length = 10, double _very_large_cost = 1000000);
 	//CTracker(float _dt, float _Accel_noise_mag, double _dist_thres = 60, double _cos_thres = -, int _maximum_allowed_skipped_frames, int _max_trace_length, double _very_large_cost = 1000000);
 	void updateSkipedSkippedFrames();
+	void setPlateForTrackers(const cv::Mat& originalImage, std::vector<cv::Rect> &listPlateObjs);
 	~CTracker(void);
 };
 

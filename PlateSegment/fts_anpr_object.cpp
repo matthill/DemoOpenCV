@@ -123,6 +123,47 @@ void FTS_LOG_ITEMS::printf(int level)
 }
 
 FTS_ANPR_OBJECT::FTS_ANPR_OBJECT()
+	: oPlate()
+	, oSrcRotated()
+	, oLinesImg()
+	, oMedOtsuThreshBinImg()
+	, oLines()
+	, oFirstBlobImg()
+	, oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg()
+	, otsuHistByMean()
+	, oTestEmptyBlob()
+	, oCleanCharBin()
+	, oFindMiddleCut()
+	, oOverviewDebugImg()
+	, oOverviewDebugImg_Resized()
+	, middleLine()
+
+	, nMedianBlobWidth( 0 )
+	, nMedianBlobHeight( 0 )
+	, rMediaBlobOtsu( 0.0 )
+	, nMinX( 0 )
+	, nMaxX( 0 )
+	, nAdjustedMinX( INT_MAX )
+	, nAdjustedMaxX( INT_MIN )
+	, lPlateDetectTime ( 0 )
+	, lPlateSegmentTime( 0 )
+	, lPlateOcrTime    ( 0 )
+	, rCropTime        ( 0.0 )
+	, rRotateTime	   ( 0.0 )
+	, rFindMiddleCutTime   ( 0.0 )
+	, rDoSegmentTime       ( 0.0 )
+
+	, plateRect()
+	, oTopLineMiddleGapBB()
+	, allHistograms()
+	, oBestCharBoxes()
+	, oCharPosLine()
+	, oBestBinImages()
+	, rawBins()
+	, charRegions2D()
+	, oReservedNoisyBlobs()
+	, ocrResults()
+	, ppResults()
 {	
 }
 
@@ -358,6 +399,15 @@ void FTS_ANPR_OBJECT::createOverviewDebugImg()
 			rectangle( oBinsColor[i], charRegions2D[i][j], Scalar(0,255,0) );
 		}
 		destinationRect.y = TILE_HEIGHT*i;
+
+		// DV: 21/07/2014 - draw top line middle gap bb
+		if( oTopLineMiddleGapBB.width > 0 )
+		{
+//			rectangle( oBinsColor[i], oTopLineMiddleGapBB, Scalar(145,61,136), CV_FILLED );
+			Point2f oCenter( oTopLineMiddleGapBB.x + (float)oTopLineMiddleGapBB.width/2, oTopLineMiddleGapBB.y + (float)oTopLineMiddleGapBB.height/2 );
+			circle( oBinsColor[i], oCenter, 10, Scalar(145,61,136), CV_FILLED );
+		}
+
 		drawIntoArea(oBinsColor[i], oOverviewDebugImg, destinationRect);
 	}
 
@@ -372,6 +422,7 @@ void FTS_ANPR_OBJECT::createOverviewDebugImg()
 	{
 		/*if( (int)pp >= topN )
 		{
+
 			break;
 		}*/
 		if (bestPlateIndex == -1 && ppResults[pp].matchesTemplate)
@@ -437,7 +488,7 @@ void FTS_ANPR_OBJECT::write(std::string strOutputFolder, std::string strDeviceID
 	std::string sImgFilePath = getDateTimeString(timer, sImgFolder + "DBG" + "_%Y%m%d_%H%M%S_" + frameID + ".jpg");
 	if(oOverviewDebugImg.empty())
 		this->createOverviewDebugImg();
-	cv::imwrite(sImgFilePath, this->oOverviewDebugImg);	
+	cv::imwrite(sImgFilePath, this->oOverviewDebugImg);
 
 	//get & create xml folder
 	//std::string sXmlFolder = createDirectory(strOutputFolder, "RAW", strDeviceID, sCurDate, "");

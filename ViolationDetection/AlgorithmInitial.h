@@ -1,18 +1,15 @@
 #ifndef _FTS_LV_ALGORITHMINITIAL_
 #define _FTS_LV_ALGORITHMINITIAL_
 
-#include <thread>
-#include <mutex>
-#include <vector>
-#include <queue>
-
 #include <opencv2/opencv.hpp>
 
 #include "FTSAlgorithm.h"
 #include "FTSVideoAlgorithm.h"
 #include "FTSLaneViolation.h"
 #include "FTSLaneViolationRegion.h"
+#include "FTSPlateScanner.h"
 #include "FTSRedSignalViolation.h"
+#include "FTSRedSignalViolationBS.h"
 #include "FTSVehicleCounting.h"
 #include "FTSANPR.h"
 
@@ -32,6 +29,12 @@ static cv::Algorithm* createFTS_LaneViolation() {
 static cv::Algorithm* createFTS_LaneViolationRegion() {
 	return new FTSLaneViolationRegion;
 }
+static cv::Algorithm* createFTS_PlateScanner() {
+	return new FTSPlateScanner;
+}
+static cv::Algorithm* createFTS_RedSignalViolationBS() {
+	return new FTSRedSignalViolation;
+}
 static cv::Algorithm* createFTS_RedSignalViolation() {
 	return new FTSRedSignalViolation;
 }
@@ -44,6 +47,8 @@ static cv::AlgorithmInfo al_info("FTSAlgorithm", createFTSAlgorithm);
 static cv::AlgorithmInfo alv_info("FTSAlgorithm.Video", createFTSVideoAlgorithm);
 static cv::AlgorithmInfo lv_info("FTSAlgorithm.LaneViolation", createFTS_LaneViolation);
 static cv::AlgorithmInfo lvr_info("FTSAlgorithm.LaneViolationRegion", createFTS_LaneViolationRegion);
+static cv::AlgorithmInfo ps_info("FTSAlgorithm.PlateScanner", createFTS_PlateScanner);
+static cv::AlgorithmInfo rvbs_info("FTSAlgorithm.RedSignalViolationBS", createFTS_RedSignalViolationBS);
 static cv::AlgorithmInfo rv_info("FTSAlgorithm.RedSignalViolation", createFTS_RedSignalViolation);
 static cv::AlgorithmInfo vc_info("FTSAlgorithm.VehicleCounting", createFTS_VehicleCounting);
 static cv::AlgorithmInfo anpr_info("FTSAlgorithm.ANPR", createFTS_ANPR);
@@ -146,6 +151,39 @@ cv::AlgorithmInfo* FTSLaneViolationRegion::info() const {
 	return &lvr_info;
 }
 
+cv::AlgorithmInfo* FTSPlateScanner::info() const {
+	static volatile bool initialized = false;
+	if (!initialized) {
+		FTSPlateScanner obj;
+		ps_info.addParam(obj, "bDebug", obj.bDebug);
+		ps_info.addParam(obj, "AnprParamFile", obj.strAnprParamFile);
+
+		ps_info.addParam(obj, "strRoiImg", obj.strRoiImg);
+		ps_info.addParam(obj, "strRoiVehicleImg", obj.strRoiVehicleImg);
+
+		ps_info.addParam(obj, "fMaxLearningRate", obj.fMaxLearningRate);
+		ps_info.addParam(obj, "fScaleRatio", obj.fScaleRatio);
+		ps_info.addParam(obj, "fVarThreshold", obj.fVarThreshold);
+
+		ps_info.addParam(obj, "iContourMinArea", obj.iContourMinArea);
+		ps_info.addParam(obj, "iContourMaxArea", obj.iContourMaxArea);
+		ps_info.addParam(obj, "iHistory", obj.iHistory);
+		ps_info.addParam(obj, "iInterval", obj.iInterval);
+		ps_info.addParam(obj, "iTrainingFrame", obj.iTrainingFrame);
+
+		ps_info.addParam(obj, "_dt", obj._dt);
+		ps_info.addParam(obj, "_Accel_noise_mag", obj._Accel_noise_mag);
+		ps_info.addParam(obj, "_dist_thres", obj._dist_thres);
+		ps_info.addParam(obj, "_cos_thres", obj._cos_thres);
+		ps_info.addParam(obj, "_maximum_allowed_skipped_frames", obj._maximum_allowed_skipped_frames);
+		ps_info.addParam(obj, "_max_trace_length", obj._max_trace_length);
+		ps_info.addParam(obj, "_very_large_cost", obj._very_large_cost);
+
+		initialized = true;
+	}
+	return &ps_info;
+}
+
 cv::AlgorithmInfo* FTSRedSignalViolation::info() const {
 	static volatile bool initialized = false;
 	if (!initialized) {
@@ -166,11 +204,51 @@ cv::AlgorithmInfo* FTSRedSignalViolation::info() const {
 		rv_info.addParam(obj, "iInterval", obj.iInterval);
 		rv_info.addParam(obj, "iTrainingFrame", obj.iTrainingFrame);
 
+		rv_info.addParam(obj, "_dt", obj._dt);
+		rv_info.addParam(obj, "_Accel_noise_mag", obj._Accel_noise_mag);
+		rv_info.addParam(obj, "_dist_thres", obj._dist_thres);
+		rv_info.addParam(obj, "_cos_thres", obj._cos_thres);
+		rv_info.addParam(obj, "_maximum_allowed_skipped_frames", obj._maximum_allowed_skipped_frames);
+		rv_info.addParam(obj, "_max_trace_length", obj._max_trace_length);
+		rv_info.addParam(obj, "_very_large_cost", obj._very_large_cost);
+
 		initialized = true;
 	}
 	return &rv_info;
 }
 
+cv::AlgorithmInfo* FTSRedSignalViolationBS::info() const {
+	static volatile bool initialized = false;
+	if (!initialized) {
+		FTSRedSignalViolationBS obj;
+		rvbs_info.addParam(obj, "bDebug", obj.bDebug);
+		rvbs_info.addParam(obj, "AnprParamFile", obj.strAnprParamFile);
+
+		rvbs_info.addParam(obj, "strRoiImg", obj.strRoiImg);
+		rvbs_info.addParam(obj, "strStopRoiImage", obj.strStopRoiImage);
+
+		rvbs_info.addParam(obj, "fMaxLearningRate", obj.fMaxLearningRate);
+		rvbs_info.addParam(obj, "fScaleRatio", obj.fScaleRatio);
+		rvbs_info.addParam(obj, "fVarThreshold", obj.fVarThreshold);
+
+		rvbs_info.addParam(obj, "iContourMinArea", obj.iContourMinArea);
+		rvbs_info.addParam(obj, "iContourMaxArea", obj.iContourMaxArea);
+		rvbs_info.addParam(obj, "iHistory", obj.iHistory);
+		rvbs_info.addParam(obj, "iInterval", obj.iInterval);
+		rvbs_info.addParam(obj, "iTrainingFrame", obj.iTrainingFrame);
+
+		rvbs_info.addParam(obj, "_dt", obj._dt);
+		rvbs_info.addParam(obj, "_Accel_noise_mag", obj._Accel_noise_mag);
+		rvbs_info.addParam(obj, "_dist_thres", obj._dist_thres);
+		rvbs_info.addParam(obj, "_cos_thres", obj._cos_thres);
+		rvbs_info.addParam(obj, "_maximum_allowed_skipped_frames", obj._maximum_allowed_skipped_frames);
+		rvbs_info.addParam(obj, "_max_trace_length", obj._max_trace_length);
+		rvbs_info.addParam(obj, "_very_large_cost", obj._very_large_cost);
+
+		initialized = true;
+	}
+	return &rvbs_info;
+}
 cv::AlgorithmInfo* FTSVehicleCounting::info() const {
 	static volatile bool initialized = false;
 	if (!initialized) {
@@ -250,12 +328,12 @@ bool initFTSAlgorithm() {
 		alv = createFTSVideoAlgorithm(),
 		lv = createFTS_LaneViolation(),
 		lvr = createFTS_LaneViolationRegion(),
+		ps  = createFTS_PlateScanner(),
 		rv = createFTS_RedSignalViolation(),
+		rvbs = createFTS_RedSignalViolationBS(),
 		vc = createFTS_VehicleCounting(),
 		anpr = createFTS_ANPR();
-	return al->info() != 0 && lv->info() != 0 && lvr->info() != 0 && rv->info() != 0 && vc->info() != 0 && anpr->info() != 0;
+	return al->info() != 0 && lv->info() != 0 && lvr->info() != 0 && rv->info() != 0 && vc->info() != 0 && anpr->info() != 0 && rvbs->info() !=0 && ps->info() != 0;
 }
-
-
 
 #endif

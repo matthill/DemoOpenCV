@@ -76,7 +76,15 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 		InitANPREngine();
 	}
 
-	Mat imgPlate = e.imgOrg(e.rectBoundingBox);
+	Mat imgPlate, imgVehicle;
+	if (e.imgPlate.empty()){
+		imgPlate = e.imgOrg(e.rectBoundingBox);
+	}
+	else{
+		imgPlate = e.imgPlate;
+		pEngine->setRunPlateDetect(false);
+	}
+	imgVehicle = e.imgOrg(e.rectBoundingBox);
 	if (imgPlate.channels() == 3) {
 		cvtColor(imgPlate, imgPlate, CV_BGR2GRAY);
 	}
@@ -84,7 +92,7 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 	bool bRet = false;
 	vector<AlprResult> result;
 	int nLPRRes = pEngine->recognize(imgPlate, result);
-
+	
 	BOOST_LOG_CHANNEL_SEV(lg, FTSANPR::className(), LOG_INFO) << "ANPR process time: " << double(clock() - begin) / CLOCKS_PER_SEC << "s";
 	if(nLPRRes == ANPR_ERR_ENGINE_NOT_INIT)
 	{
@@ -115,7 +123,11 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 				BOOST_LOG_CHANNEL_SEV(lg, FTSANPR::className(), LOG_INFO) << "Plate Detected - Plate Info";
 				e.plate.strPlate = result[i].bestPlate.characters;
 				e.plate.fConfident = result[i].bestPlate.overall_confidence;
-				e.plate.imgPlate = imgPlate(result[i].plateRect);
+				if (e.rectViewPlateBB.area() > 0){
+					e.plate.imgPlate = e.imgOrg(e.rectViewPlateBB);
+				}
+				else
+					e.plate.imgPlate = imgPlate(result[i].plateRect);
 				BOOST_LOG_CHANNEL_SEV(lg, FTSANPR::className(), LOG_INFO) << e.plate.strPlate << " " << e.plate.fConfident;
 				bRet = true;
 				break;
@@ -125,7 +137,11 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 				BOOST_LOG_CHANNEL_SEV(lg, FTSANPR::className(), LOG_INFO) << "Plate Regconized But Not Match VN Plate Template";
 				e.plate.strPlate = result[i].bestPlate.characters;
 				e.plate.fConfident = result[i].bestPlate.overall_confidence;
-				e.plate.imgPlate = imgPlate(result[i].plateRect);
+				if (e.rectViewPlateBB.area() > 0){
+					e.plate.imgPlate = e.imgOrg(e.rectViewPlateBB);
+				}
+				else
+					e.plate.imgPlate = imgPlate(result[i].plateRect);
 				BOOST_LOG_CHANNEL_SEV(lg, FTSANPR::className(), LOG_INFO) << e.plate.strPlate << " " << e.plate.fConfident;
 			}
 		}
@@ -148,7 +164,8 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 		std::string strTime = getDateTimeString(timer, "%Y%m%d_%H%M%S");
 		
 		std::string sImgFilePath = formatString("%sSrc_%s_%d_%ld.jpg", sSrcFolder.c_str(), strTime.c_str(), e.lEventTime, COUNTER);
-		imwrite(sImgFilePath, imgPlate);
+		
+		imwrite(sImgFilePath, imgVehicle);
 
 		//write overview debug image and log
 		if (nLPRRes > ANPR_ERR_NOPLATEDETECT && result.size() > 0) 
@@ -174,7 +191,7 @@ bool FTSANPR::operator() (ViolationEvent& e) {
 	//output xml event
 	if (bRet)
 		e.process();
-	//*isFinish = true;
+
 	return bRet;
 }
 
@@ -231,7 +248,7 @@ FTSANPR::FTSANPR() {
 	this->filterByBBArea = true;
 	this->minBBArea = 35;
 	this->maxBBArea = 2500;
-	this->minBBHoW = 0.4f;
+	this->minBBHoW = 0.4;
 	this->maxBBHoW = 10.0;
 	this->minBBHRatio = 0.125;
 	this->minDistBetweenBlobs = 4.0f;

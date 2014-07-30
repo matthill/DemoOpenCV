@@ -15,13 +15,40 @@
 
 #include "fts_anpr_object.h"
 
+#include <opencv2/contrib/contrib.hpp>
+
 #ifdef _DEBUG
 #define GUI
 #endif
 
 AnprParams::AnprParams()
+	: m_fLPDScaleFactor( DEFAULT_LPD_SCALEFACTOR )					//scale factor used in cascade.detectmultiscale
+	, m_iLPDMinNeighbors( DEFAULT_LPD_MINNEIGHBOR )					//min neighbor used in cascade.detectmultiscale
+	, m_iLPDMinPlateWidth( DEFAULT_LPD_MINPLATEWIDTH )				//min plate width
+	, m_iLPDMinPlateHeight( DEFAULT_LPD_MINPLATEHEIGHT )			//min plate height
+	, m_iLPDMaxPlateWidth( DEFAULT_LPD_MAXPLATEWIDTH )				//max plate width
+	, m_iLPDMaxPlateHeight( DEFAULT_LPD_MAXPLATEHEIGHT )			//max plate height
+	, m_fExpandRectX( DEFAULT_LPD_EXPAND_RECT_X )					//expandRect in X-axis: < 1.0(> percent-based, > 1(> increase by pixel size
+	, m_fExpandRectY( DEFAULT_LPD_EXPAND_RECT_Y )					//expandRect in Y-axis: < 1.0(> percent-based, > 1(> increase by pixel size
+	, m_iTemplatePlateWidth( DEFAULT_LPD_TEMPLATE_PLATE_WIDTH )		//template plate after resize to recognize
+	, filterByArea( false )
+	, filterByBBArea( true )
+	, minBBArea( 35 )
+	, maxBBArea( 2500 )
+	, minBBHoW( 0.4 )
+	, maxBBHoW( 10.0 )
+	, minBBHRatio( 0.125 )
+	, minDistBetweenBlobs( 4.0f )
+	, useXDist( false )
+	, useAdaptiveThreshold( false )
+	, nbrOfthresholds( 5 )
+	, nExpandTop( 20 )
+	, nExpandBottom( 0 )
+	, nExpandLeft( 10 )
+	, nExpandRight( 10 )
+	, nLocale( ANPR_LOCALE_VN )
 {
-	this->reset();
+	// this->reset();	// DV: 21/07/2014: Initialization is better practice
 }
 
 void AnprParams::reset()
@@ -52,6 +79,8 @@ void AnprParams::reset()
 	nExpandBottom = 0;
 	nExpandLeft = 10;
 	nExpandRight = 10;
+
+	nLocale = ANPR_LOCALE_VN;
 }
 
 void AnprParams::operator=(const AnprParams& params)
@@ -304,7 +333,8 @@ bool Fts_Anpr_Engine::setParams(
 								int iMinCharConf,
 								int iConfSkipCharLevel,
 								int iMaxSubstitutions,
-								bool bPostProcessDebug)
+								bool bPostProcessDebug,
+								bool bEnableDetection)
 {	
 #ifndef USING_SVM_OCR
 	if(!DirectoryExists(runtimeOcrDir.c_str()))
@@ -373,6 +403,7 @@ bool Fts_Anpr_Engine::setParams(
 	this->m_iConfSkipCharLevel = iConfSkipCharLevel;
 	this->m_iMaxSubstitutions = iMaxSubstitutions;
 	this->m_bPostProcessDebug = bPostProcessDebug;
+	this->m_bRunPlateDetect = bEnableDetection;
 
 	return true;
 }
@@ -423,7 +454,7 @@ bool Fts_Anpr_Engine::initEngine()
 
 	plate_cascade = new CascadeClassifier();
 #ifndef WIN32
-	if( !plate_cascade->load( "/home/sensen/data/cascade/cascade_haar_21x40_15000_22196_unfiltered.xml" ) )
+	if( !plate_cascade->load( "/home/sensen/data/cascade/cascade_lbp_24x20_ShortLPs_Cropped_7k_15k.xml" ) )
 #else
 	if( !plate_cascade->load( this->strCascadeFile ) )
 #endif
@@ -523,10 +554,12 @@ int Fts_Anpr_Engine::recognize(const cv::Mat& oSrc, std::vector<AlprResult>& res
 	//-- Detect plates
 	std::vector<Rect> plates;
 	long long lPlateDetectTime=0;
-	this->plateDetect(oSrc, plates, lPlateDetectTime);
+		this->plateDetect(oSrc, plates, lPlateDetectTime);
 	if(plates.size() == 0)
 	{
-		return ANPR_ERR_NOPLATEDETECT;
+//		return ANPR_ERR_NOPLATEDETECT;
+		plates.clear();
+		plates.push_back( Rect( 0, 0, oSrc.cols, oSrc.rows ) );
 	}
 
 	// DV: 14/07/2014 - use this to do segmentation on the original image
@@ -648,6 +681,8 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 	int nPadded = 1;
 	long long start = getCurrentTimeInMS();
 
+	TickMeter tm; tm.start();
+
 	// Default crop
 #ifdef FIRST_EXPAND_BY_FIXED_PIXELS
 	oExpandedRect = FTS_IP_Util::expandRectTBLR( plateRect, plateExpand, oSrc.cols - 1, oSrc.rows - 1);
@@ -709,6 +744,10 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 	// Crop
 	cv::Mat oCropped = oAnprObject.oPlate.clone();
 
+	tm.stop();
+	oAnprObject.rCropTime = tm.getTimeMilli();
+	tm.start();
+
 	// Detect blobs
 	FTS_IP_SimpleBlobDetector::Params params;
 	FTS_IP_SimpleBlobDetector myBlobDetector(params);
@@ -731,6 +770,9 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 
 	// Rotate image
 	myBlobDetector.rotate( oCropped, bBlackChar, Mat(), -nPadded, -nPadded, oAnprObject.oSrcRotated );
+
+	tm.stop();
+	oAnprObject.rRotateTime = tm.getTimeMilli();
 
 	// SEGMENTATION
 	//==============================================================================
@@ -755,6 +797,8 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 	}
 	else
 	{
+		TickMeter tmFMC; tmFMC.start();
+
 		// DV: this function not just find middle cut, it finds:
 		// 1. all candidate blobs
 		// 2. the max number of blobs on a single line
@@ -775,6 +819,9 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 												 oBottomBlobs,
 												 nMinX, nMaxX, nMaxBlobsPerLine );
 
+		tmFMC.stop();
+		oAnprObject.rFindMiddleCutTime = tmFMC.getTimeMilli();
+
 		if(m_bDebug)
 		{
 			oAnprObject.oDebugLogs.info( "Found nCut = %d", nCut );
@@ -782,6 +829,7 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 			oAnprObject.oDebugLogs.info( "Found min x = %d, max x = %d", nMinX, nMaxX );
 		}
 
+		tm.start();
 		//try read upper part
 		bUseLocalOtsu = false;	// DV: 01/07/2014 - local otsu is not good for top line
 		bSegmentSuccess = doSegment( oAnprObject.oSrcRotated,
@@ -809,7 +857,12 @@ bool Fts_Anpr_Engine::plateSegment( const cv::Mat& oSrc,
 					  MAX_NUM_OF_DUAL_LINE_BOTTOM,
 					  oAnprObject,
 					  bUseLocalOtsu );
+
+		tm.stop();
+		oAnprObject.rDoSegmentTime = tm.getTimeMilli();
 	}
+
+
 
 	long long end = getCurrentTimeInMS();
 	oAnprObject.lPlateSegmentTime = end - start;
@@ -830,20 +883,33 @@ void Fts_Anpr_Engine::plateOcr(const cv::Mat& oSrc,
 	plateResult.plateRect = plateRect;
 	plateResult.oAnprObject.plateRect = plateRect;
 
-	//DV add
-	// Get exact boundaries
-	vector< vector<Rect> > charRegions2D = getExactCharBB(oBestBinImages, oBestCharBoxes );
-
-	// DV: 16/06/2014 - Find short, mostly full, mostly empty blobs by going through all binary images
-	vector< vector<Rect> > charRegionsFinal2D = getCorrectSizedCharRegions( oBestBinImages,
-																			oBestCharBoxes,
-																			charRegions2D,
-																			plateResult.oAnprObject );
+	// DV: 21/07/2014 - this is moved out of this function for good
+//	// Get exact boundaries
+//	vector< vector<Rect> > charRegions2D = getExactCharBB(oBestBinImages, oBestCharBoxes );
+//
+//	// DV: 16/06/2014 - Find short, mostly full, mostly empty blobs by going through all binary images
+//	vector< vector<Rect> > charRegionsFinal2D = getCorrectSizedCharRegions( oBestBinImages,
+//																			oBestCharBoxes,
+//																			charRegions2D,
+//																			plateResult.oAnprObject );
+//	// DV: 21/07/2014 - TODO find top line middle gap
+//	//	vector<float> rvInterDist;
+////	vector<Rect>& oBoxes = charRegionsFinal2D[0];
+////	for( size_t i = 0; i < oBoxes.size() - 1; i++ )
+////	{
+////		rvInterDist.push_back( (float)( oBoxes[i+1].x - ( oBoxes[i].x + oBoxes[i].width ) ) );
+////	}
+////	int nMaxIdx = FTS_BASE_MaxElementIndex( rvInterDist.begin(), rvInterDist.end() );
+////	Rect rMiddleGapBB;
+////	rMiddleGapBB.x      = oBoxes[nMaxIdx].x + oBoxes[nMaxIdx].width;
+////	rMiddleGapBB.y      = oBoxes[nMaxIdx].y;
+////	rMiddleGapBB.width  = rvInterDist[nMaxIdx];
+////	rMiddleGapBB.height = oBoxes[nMaxIdx].height;
+//
+//	// DV: 23/06/2014 - copy exact bounding boxes
+//	plateResult.oAnprObject.charRegions2D = charRegionsFinal2D;
 
 	// 21.06 Trung
-	// DV: 23/06/2014 - copy exact bounding boxes
-	plateResult.oAnprObject.charRegions2D = charRegionsFinal2D;
-
 	//Tesseract API
 	//ocrMutex.lock();
 	{
@@ -923,29 +989,27 @@ void Fts_Anpr_Engine::plateOcr(const cv::Mat& oSrc,
 	}
 }
 
-bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
-							     const cv::Mat& oMask,
-							     const bool bSingleLine,
-							     const bool bBlackChar,
-							     const int nInputMinX,		// soft bound by cropping
-							     const int nInputMaxX,		// soft bound by cropping
-							     const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oInputBlobs,
-							     vector<Mat>& oBinaryImages,
-							     const int nMaxNbrOfChar,
-							     FTS_ANPR_OBJECT& oAnprObject,
-								 bool bUseLocalOtsu )
+
+bool Fts_Anpr_Engine::findAllBlobsIfNotDone( const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oInputBlobs,
+										     const cv::Mat& oSrc,
+										     const cv::Mat& oMask,
+										     const bool bSingleLine,
+										     const int nPaddedBorder,
+										     const int nMaxNbrOfChar,
+										     FTS_ANPR_OBJECT& oAnprObject,
+										     vector<Mat>& oBinaryImages,
+										     FTS_IP_SimpleBlobDetector& myBlobDetector,
+										     vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs )
 {
-#ifdef TRY_LSD	
-	Test_LSD( oSrc, oAnprObject.oLinesImg );
-#endif
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "INITIAL BLOBS ARE GIVEN, IF NOT ANY DO IT NOW" );
 
-	int nPaddedBorder = 1;
-
-	cv::Mat oSrcRotated = oSrc.clone();
+	// The initial blobs are given
+	blobs = oInputBlobs;
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "Raw binary gave %d blobs", oInputBlobs.size() );
 
 	// Contours work better on padded images
 	cv::Mat srcPadded;
-	cv::copyMakeBorder( oSrcRotated,
+	cv::copyMakeBorder( oSrc,
 						srcPadded,
 						nPaddedBorder,
 						nPaddedBorder,
@@ -953,32 +1017,13 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 						nPaddedBorder,
 						IPL_BORDER_CONSTANT, bBlackChar?Scalar(255):Scalar(0)  );
 
-	// Threshold by OTSU
-	const int nThresholdType = bBlackChar ? CV_THRESH_BINARY_INV : CV_THRESH_BINARY;
-#ifdef TEST_MINMAX_OTSU
-	cv::Mat oBinByOtsu;
-	cv::Mat minOtsuImg;
-	cv::Mat maxOtsuImg;	
-	double rOtsu = cv::threshold( oSrcRotated, oBinByOtsu, 0, 255, nThresholdType | CV_THRESH_OTSU );
-
-	double rMinOtsu = rOtsu - 40;
-	double rMaxOtsu = rOtsu + 20;
-	cv::threshold( oSrcRotated, minOtsuImg, rMinOtsu, 255, nThresholdType );
-	cv::threshold( oSrcRotated, maxOtsuImg, rMaxOtsu, 255, nThresholdType );
-#endif
-
-	// Detect blobs
-	FTS_IP_SimpleBlobDetector::Params params;
-	params.bDebug = m_bDebug;
-	params.bDisplayDbgImg = m_bDisplayDbgImg;
-	FTS_IP_SimpleBlobDetector myBlobDetector(params);
-	// DV 23/06/2014: refer to ANPR object
-	myBlobDetector.m_poANPRObject = &oAnprObject;
-	vector<FTS_IP_SimpleBlobDetector::SimpleBlob> blobs = oInputBlobs;
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "INPUT BLOBS = %d", blobs.size() );
 	if( oInputBlobs.size() == 0 )
 	{
 		// Detect blobs using bounding boxes
+		FTS_IP_SimpleBlobDetector::Params params;
+		params.bDebug = m_bDebug;
+		params.bDisplayDbgImg = m_bDisplayDbgImg;
+
 		params.filterByArea = false;
 		params.filterByBBArea = true;
 		params.minBBArea = 35;
@@ -997,6 +1042,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		// remove long lines with hope to find blobs
 		if( !bSingleLine )
 		{
+			if(m_bDebug) oAnprObject.oDebugLogs.info( "Turn on long line removal hoping to extract some blobs\n" );
 			params.removeLongLine = true;
 			params.longLineLengthRatio = (nMaxNbrOfChar != 0 ) ? 1.0 / nMaxNbrOfChar : 0.5;	// TODO: can be better???
 		}
@@ -1004,7 +1050,6 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		myBlobDetector.updateParams( params );
 
 		cv::Mat oFirstMaskPadded;
-		oFirstMaskPadded.create( oMask.rows + 2*nPaddedBorder, oMask.cols + 2*nPaddedBorder, oMask.type() );
 		cv::copyMakeBorder( oMask,
 							oFirstMaskPadded,
 							nPaddedBorder,
@@ -1016,8 +1061,8 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 								  blobs,
 								  bBlackChar,
 								  oFirstMaskPadded,
-								 -nPaddedBorder,
-								 -nPaddedBorder );
+								  ( nPaddedBorder > 0 ) ? -nPaddedBorder : 0,
+								  ( nPaddedBorder > 0 ) ? -nPaddedBorder : 0 );
 
 		// DV: 21/06/2014
 		// In case of single line, binary images passed in this function
@@ -1035,68 +1080,64 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 
 	if( blobs.size() == 0 )
 	{
-		oAnprObject.oDebugLogs.error( "NO BLOB IS DETECTED AT FIRST ATTEMPT, SKIP" );
-		/*FTS_GUI_DisplayImage::ShowAndScaleBy2( "Source", oSrc,
-					FTS_GUI_DisplayImage::SCALE_X,
-					FTS_GUI_DisplayImage::SCALE_Y,0, 0 );*/			//no need to display here
+		oAnprObject.oDebugLogs.error( "No blob is detected from the first attempt, skip." );
 		if(m_bDelayOnFrame) waitKey(0);
 		return false;
 	}
 
-	// DV: 01/07/2014 - if not using local otsu, replace it by the adaptive block = 19
-	Mat oLocalOtsuSubstitue = oBinaryImages[4];	// TODO: only good if adaptive is good
-
 	// SORT BY X COORDINATE
-	// =====================================================================
 	sort( blobs.begin(), blobs.end(), FTS_IP_SimpleBlobDetector::less_than_x_coord() );
 
+	return true;
+}
+
+bool Fts_Anpr_Engine::refineBlobsInRange( const cv::Mat& oSrc,
+										  const int nInputMinX,		// soft bound by cropping
+									      const int nInputMaxX,		// soft bound by cropping
+									      const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+									      const bool bUseLocalOtsu,
+									      const int nThresholdType,
+									      const int nPaddedBorder,
+									      const Mat oLocalOtsuSubstitue,
+									      const int nMinMedianWidth,
+									      const int nMinMedianHeight,
+									      const float rMinWoH,
+									      const float rMaxWoH,
+										  FTS_ANPR_OBJECT& oAnprObject,
+										  vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oBlobsWithinCroppedXRange,
+										  int& nValidMinX,
+										  int& nValidMaxX )
+{
 	// MEDIAN WIDTH, HEIGHT, OTSU
 	// =====================================================================
 	// TODO DV: ONLY consider blobs within the cropped X range
-	if(m_bDebug)
-	{
-		oAnprObject.oDebugLogs.info( "nInputMinX = %d, nInputMaxX = %d", nInputMinX, nInputMaxX );
-	}
-	int nValidMinX = ( nInputMinX == INT_MAX ) ? 0 : nInputMinX;
-	int nValidMaxX = ( nInputMaxX == INT_MIN ) ? oSrcRotated.cols - 1 : nInputMaxX;
-	vector<FTS_IP_SimpleBlobDetector::SimpleBlob> oBlobsWithinCroppedXRange = getBlobsInXRange( blobs,
-																								nValidMinX,
-																								nValidMaxX );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "FIND BLOBS WITHIN SOFT X RANGE, ALSO CALC MEDIAN WIDTH, HEIGHT" );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "nInputMinX = %d, nInputMaxX = %d", nInputMinX, nInputMaxX );
+	nValidMinX = ( nInputMinX == INT_MAX ) ? 0 : nInputMinX;
+	nValidMaxX = ( nInputMaxX == INT_MIN ) ? oSrc.cols - 1 : nInputMaxX;
+	oBlobsWithinCroppedXRange = getBlobsInXRange( blobs,
+												  nValidMinX,
+												  nValidMaxX );
 
 	if( oBlobsWithinCroppedXRange.size() == 0 )
 	{
-		oAnprObject.oDebugLogs.warn( "NO BLOB IS DETECTED WITHIN MINX = %d, MAXX = %d", nValidMinX, nValidMaxX );
+		oAnprObject.oDebugLogs.warn( "No blob detected within minx = %d, maxx = %d", nValidMinX, nValidMaxX );
 		return false;
 	}
 
-	// DV: 14/07/2014 - 1,I, or thin characters should not contribute to the median width
-	float rMinWoH = 0.25;	// TODO: i think these values are safe.
-	float rMaxWoH = 0.8;
-	int nMinMedianWidth = 0;
-
-//	FTS_BASE_STACK_ARRAY( int, oBlobsWithinCroppedXRange.size(), oWidths );
-//	fillBlobWidthArray( oWidths, oBlobsWithinCroppedXRange );
-//	oAnprObject.nMedianBlobWidth = FTS_BASE_MedianBiasHigh( oWidths );
 	oAnprObject.nMedianBlobWidth = FTS_ANPR_Util::findMedianBlobWidthOfWoHInRange( oBlobsWithinCroppedXRange, rMinWoH, rMaxWoH, nMinMedianWidth );
+	oAnprObject.nMedianBlobHeight = FTS_ANPR_Util::findMedianBlobHeight( oBlobsWithinCroppedXRange, nMinMedianHeight );
 
-//	FTS_BASE_STACK_ARRAY( int, oBlobsWithinCroppedXRange.size(), oHeights );
-//	fillBlobHeightArray( oHeights, oBlobsWithinCroppedXRange );
-//	oAnprObject.nMedianBlobHeight = FTS_BASE_MedianBiasHigh( oHeights );
-	oAnprObject.nMedianBlobHeight = FTS_ANPR_Util::findMedianBlobHeight( oBlobsWithinCroppedXRange, nMinMedianWidth );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "Median blob width  = %d, height = %d", oAnprObject.nMedianBlobWidth, oAnprObject.nMedianBlobHeight );
 
-	if(m_bDebug)
-	{
-		oAnprObject.oDebugLogs.info( "Median blob width  = %d, height = %d", oAnprObject.nMedianBlobWidth, oAnprObject.nMedianBlobHeight );		
-	}
-
-	// DV: 01/07/2014
+	// DV: 01/07/201
 	// The idea is to again binarize the image with the optimal median otsu value
 	// However in case the plate has shadow( mostly motorbike ), the otsu does
 	// not give a good binary image, so replace it with an adaptive alternative
 	if( bUseLocalOtsu )
 	{
 		FTS_BASE_STACK_ARRAY( double, oBlobsWithinCroppedXRange.size(), oOtsus );
-		fillBlobOtsuArray( oOtsus, oBlobsWithinCroppedXRange, oSrcRotated );
+		fillBlobOtsuArray( oOtsus, oBlobsWithinCroppedXRange, oSrc );
 		oAnprObject.rMediaBlobOtsu = FTS_BASE_Median( oOtsus );
 		if(m_bDebug)
 		{
@@ -1107,117 +1148,184 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		}
 
 		// Binarize with the new otsu
-		cv::threshold( oSrcRotated, oAnprObject.oMedOtsuThreshBinImg, oAnprObject.rMediaBlobOtsu, 255, nThresholdType );
+		cv::threshold( oSrc, oAnprObject.oMedOtsuThreshBinImg, oAnprObject.rMediaBlobOtsu, 255, nThresholdType );
 	}
 	else
 	{
 		//++04.07 trungnt1 modify to apply on original scale, not padded border
-		cv::Rect rSrcRect(nPaddedBorder, nPaddedBorder, oSrcRotated.cols, oSrcRotated.rows);
+		cv::Rect rSrcRect(nPaddedBorder, nPaddedBorder, oSrc.cols, oSrc.rows);
 		oAnprObject.oMedOtsuThreshBinImg = oLocalOtsuSubstitue(rSrcRect);
 		//--
 	}
 
-	// TOP & BOTTOM LINES
-	// =====================================================================
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "TOP & BOTTOM LINES" );
+	return true;
+}
+
+void Fts_Anpr_Engine::findPlateBoundaries( const cv::Mat& oSrc,
+										   const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oBlobs,
+										   const int nMinArrSize,
+										   const int nValidMinX,
+										   const int nValidMaxX,
+										   FTS_IP_SimpleBlobDetector& myBlobDetector,
+										   FTS_ANPR_OBJECT& oAnprObject,
+										   FTS_BASE_LineSegment& oTopLine,
+										   FTS_BASE_LineSegment& oBottomLine,
+										   Mat& oTBLinesMask )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "FIND TOP, BOTTOM, LEFT, RIGHT BOUNDARIES OF THE PLATE. there are %d blobs", oBlobs.size() );
 
 	// DV: ONLY blobs within the horizontal cropped regions will be considered
 	// TODO: remove if not good for single-line plate
 	vector<bool> goodIndices;
-	for( unsigned int i = 0; i < oBlobsWithinCroppedXRange.size(); i++ )
+	for( unsigned int i = 0; i < oBlobs.size(); i++ )
 	{
 		goodIndices.push_back( true );
 	}
-	vector<Point> oPlateBoundingPolygon = myBlobDetector.getBoundingPolygonFromBlobs(
-			oSrcRotated.cols, oSrcRotated.rows, oBlobsWithinCroppedXRange, goodIndices );
-//	vector<bool> goodIndices;
-//	for( unsigned int i = 0; i < blobs.size(); i++ )
-//	{
-//		goodIndices.push_back( true );
-//	}
-//	vector<Point> oPlateBoundingPolygon = myBlobDetector.getBoundingPolygonFromBlobs(
-//			oSrcRotated.cols, oSrcRotated.rows, blobs, goodIndices );
+	vector<Point> oPlateBoundingPolygon = myBlobDetector.getBoundingPolygonFromBlobs( oSrc.cols, oSrc.rows, oBlobs, goodIndices );
 
-	FTS_BASE_LineSegment oTopLine( oPlateBoundingPolygon[0].x,
-								   oPlateBoundingPolygon[0].y,
-								   oPlateBoundingPolygon[1].x,
-								   oPlateBoundingPolygon[1].y );
+	oTopLine.init( oPlateBoundingPolygon[0].x,
+				   oPlateBoundingPolygon[0].y,
+				   oPlateBoundingPolygon[1].x,
+				   oPlateBoundingPolygon[1].y );
 
-	FTS_BASE_LineSegment oBottomLine( oPlateBoundingPolygon[2].x,
-									  oPlateBoundingPolygon[2].y,
-									  oPlateBoundingPolygon[3].x,
-									  oPlateBoundingPolygon[3].y );
+	oBottomLine.init( oPlateBoundingPolygon[3].x,
+					  oPlateBoundingPolygon[3].y,
+					  oPlateBoundingPolygon[2].x,
+					  oPlateBoundingPolygon[2].y );
 
-	// Mask the region between top and bottom lines
-	Mat oTBLinesMask = Mat::zeros( oSrcRotated.size(), CV_8U );
-	fillConvexPoly( oTBLinesMask, oPlateBoundingPolygon.data(), oPlateBoundingPolygon.size(), Scalar(255,255,255));
+	// Init mask poly
+	oTBLinesMask = Mat::zeros( oSrc.size(), CV_8U );
 
-	//cv::Mat oLines;
-	cv::cvtColor( oSrcRotated, oAnprObject.oLines, CV_GRAY2BGR );
-	cv::line( oAnprObject.oLines, oPlateBoundingPolygon[0], oPlateBoundingPolygon[1], cv::Scalar( 255, 0, 0), 1, CV_AA );
-	cv::line( oAnprObject.oLines, oPlateBoundingPolygon[1], oPlateBoundingPolygon[2], cv::Scalar( 255, 0, 0), 1, CV_AA );
-	cv::line( oAnprObject.oLines, oPlateBoundingPolygon[2], oPlateBoundingPolygon[3], cv::Scalar( 255, 0, 0), 1, CV_AA );
-	cv::line( oAnprObject.oLines, oPlateBoundingPolygon[3], oPlateBoundingPolygon[0], cv::Scalar( 255, 0, 0), 1, CV_AA );
+	// DV: 24/07/2014 - The new lines are too
+	// TODO: 3 degree should start to make the difference from
+	if(    oAnprObject.middleLine.length != 0
+		&& (    abs( oAnprObject.middleLine.angle - oTopLine.angle    ) > 3
+			 || abs( oAnprObject.middleLine.angle - oBottomLine.angle ) > 3 ) )
+	{
+		if(m_bDebug) oAnprObject.oDebugLogs.info( "WARNIG: Fixing top & bottom lines. Middle line angle = %f, new found line angle = %f",
+												  oAnprObject.middleLine.angle, oTopLine.angle );
 
-#ifdef TRY_LSD
-	bitwise_and( oAnprObject.oLinesImg, oTBLinesMask, oAnprObject.oLinesImg );
-//	Mat oLinesColor;
-//	cv::cvtColor( oLinesImg, oLinesColor, CV_GRAY2BGR );
-//	cv::line( oLinesColor, oPlateBoundingPolygon[0], oPlateBoundingPolygon[1], cv::Scalar( 255, 0, 0), 1, CV_AA );
-//	cv::line( oLinesColor, oPlateBoundingPolygon[2], oPlateBoundingPolygon[3], cv::Scalar( 255, 0, 0), 1, CV_AA );
-#endif
+		unsigned int nMedianIdx = (oBlobs.size() - 1)  /  2;
+		const Rect& oBox = oBlobs[nMedianIdx].oBB;
+
+		Point closestPointOnSegment2Top    = oAnprObject.middleLine.closestPointOnSegmentTo( oBox.tl() );
+		Point closestPointOnSegment2Bottom = oAnprObject.middleLine.closestPointOnSegmentTo( oBox.br() );
+
+		float rTopDist    = norm( closestPointOnSegment2Top - oBox.tl() );
+		float rBottomDist = norm( closestPointOnSegment2Bottom - oBox.br() );
+
+		Point oCenter( oBox.x + oBox.width/2, oBox.y + oBox.height/2 );
+		if( oAnprObject.middleLine.isPointBelowLine( oCenter ) )
+		{
+			oTopLine    = oAnprObject.middleLine.getParallelLine( -rTopDist );
+			oBottomLine = oAnprObject.middleLine.getParallelLine( -rBottomDist );
+		}
+		else
+		{
+			oTopLine    = oAnprObject.middleLine.getParallelLine( rTopDist );
+			oBottomLine = oAnprObject.middleLine.getParallelLine( rBottomDist );
+		}
+
+		if(m_bDebug)
+		{
+			if( oAnprObject.oLines.empty() || oAnprObject.oLines.type() != CV_8UC3 )
+			{
+				cv::cvtColor( oSrc, oAnprObject.oLines, CV_GRAY2BGR );
+			}
+			cv::line( oAnprObject.oLines, oTopLine.p1, oTopLine.p2, cv::Scalar( 0, 0, 255), 1, CV_AA );
+			cv::line( oAnprObject.oLines, oBottomLine.p1, oBottomLine.p2, cv::Scalar( 0, 0, 255), 1, CV_AA );
+		}
+
+		vector<Point> oPlateBoundingPolygonNew;
+		oPlateBoundingPolygonNew.push_back( oTopLine.p1 );
+		oPlateBoundingPolygonNew.push_back( oTopLine.p2 );
+		oPlateBoundingPolygonNew.push_back( oBottomLine.p1 );
+		oPlateBoundingPolygonNew.push_back( oBottomLine.p2 );
+
+		// Mask the region between top and bottom lines
+		fillConvexPoly( oTBLinesMask, oPlateBoundingPolygonNew.data(), oPlateBoundingPolygonNew.size(), Scalar(255,255,255));
+	}
+	else
+	{
+		// Mask the region between top and bottom lines
+		fillConvexPoly( oTBLinesMask, oPlateBoundingPolygon.data(), oPlateBoundingPolygon.size(), Scalar(255,255,255));
+	}
+
+	if(m_bDebug)
+	{
+		if( oAnprObject.oLines.empty() || oAnprObject.oLines.type() != CV_8UC3 )
+		{
+			cv::cvtColor( oSrc, oAnprObject.oLines, CV_GRAY2BGR );
+		}
+		cv::line( oAnprObject.oLines, oPlateBoundingPolygon[0], oPlateBoundingPolygon[1], cv::Scalar( 255, 0, 0), 1, CV_AA );
+//		cv::line( oAnprObject.oLines, oPlateBoundingPolygon[1], oPlateBoundingPolygon[2], cv::Scalar( 255, 0, 0), 1, CV_AA );
+		cv::line( oAnprObject.oLines, oPlateBoundingPolygon[2], oPlateBoundingPolygon[3], cv::Scalar( 255, 0, 0), 1, CV_AA );
+//		cv::line( oAnprObject.oLines, oPlateBoundingPolygon[3], oPlateBoundingPolygon[0], cv::Scalar( 255, 0, 0), 1, CV_AA );
+	}
 
 	// Find min, max X to filter edge characters
 	if(m_bDebug) oAnprObject.oDebugLogs.info( "Valid min x = %d, valid max x = %d", nValidMinX, nValidMaxX );
-	int nMinX, nMaxX;
-	int nAdjustedMinX, nAdjustedMaxX;
+	int nFinalMinX, nFinalMaxX;
 	int nXLimit = oSrc.cols - 1;
 	if( nValidMinX > 0 )
 	{
-		nMinX = nValidMinX;
-		nMaxX = nValidMaxX;
+		oAnprObject.nMinX = nValidMinX;
+		oAnprObject.nMaxX = nValidMaxX;
 
 		// Adjust min, max X based on cropping and the above find min, max X results
 		int nSafePadded = 2;	// TODO DV: setting
-		nMinX = nMinX - nSafePadded;
-		nMaxX = nMaxX + nSafePadded;
-		if( nMinX < 0 ) nMinX = 0;
-		if( nMaxX > nXLimit ) nMaxX = nXLimit;
+		oAnprObject.nMinX = oAnprObject.nMinX - nSafePadded;
+		oAnprObject.nMaxX = oAnprObject.nMaxX + nSafePadded;
+		if( oAnprObject.nMinX < 0 ) oAnprObject.nMinX = 0;
+		if( oAnprObject.nMaxX > nXLimit ) oAnprObject.nMaxX = nXLimit;
 
-		nAdjustedMinX = nMinX;
-		nAdjustedMaxX = nMaxX;
+		nFinalMinX = oAnprObject.nMinX;
+		nFinalMaxX = oAnprObject.nMaxX;
 	}
 	else
 	{
 		FTS_IP_Util::findMinMaxX( myBlobDetector.m_ovvAllBlobs,
 								  nXLimit,
-								  params.minRepeatability,
+								  nMinArrSize,
 								  oTopLine,
 								  oBottomLine,
-								  nMinX,
-								  nMaxX,
-								  nAdjustedMinX,
-								  nAdjustedMaxX );
+								  oAnprObject.nMinX,
+								  oAnprObject.nMaxX,
+								  nFinalMinX,
+								  nFinalMaxX );
 	}
 
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "After adjust, MinX = %d, MaxX = %d, width = %d", nAdjustedMinX, nAdjustedMaxX, (nXLimit+1) );
-	oAnprObject.nAdjustedMinX = nAdjustedMinX;
-	oAnprObject.nAdjustedMaxX = nAdjustedMaxX;
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "After adjust, MinX = %d, MaxX = %d, width = %d", nFinalMinX, nFinalMaxX, (nXLimit+1) );
+	oAnprObject.nAdjustedMinX = nFinalMinX;
+	oAnprObject.nAdjustedMaxX = nFinalMaxX;
+}
 
-	// HISTOGRAM
-	// =====================================================================
-	//vector<Mat> allHistograms;
+bool Fts_Anpr_Engine::findBlobsByVerticalProjection( const cv::Mat& oSrc,
+													 const int nPaddedBorder,
+													 const int nMinMedianWidth,
+													 const float rMinWoH,
+													 const float rMaxWoH,
+													 const Mat& oTBLinesMask,
+													 const FTS_BASE_LineSegment& oTopLine,
+													 const FTS_BASE_LineSegment& oBottomLine,
+													 FTS_ANPR_OBJECT& oAnprObject,
+													 vector<Mat>& oBinaryImages,
+													 FTS_IP_SimpleBlobDetector& myBlobDetector,
+													 vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+													 FTS_IP_VerticalHistogram& oVertHist )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "FIND BLOBS BY VERTICAL PROJECTION / HISTOGRAM" );
 
 	// Each binary images will give a list of boxes
 	vector<Rect> ovAllBoxes;
-	Rect oInnerRect = Rect( nPaddedBorder, nPaddedBorder, srcPadded.cols - nPaddedBorder, srcPadded.rows - nPaddedBorder );
+	Rect oInnerRect = Rect( nPaddedBorder, nPaddedBorder, oSrc.cols + nPaddedBorder, oSrc.rows + nPaddedBorder );
 	for( size_t i = 0; i < oBinaryImages.size(); i++)
 	{
 		FTS_IP_VerticalHistogram oVertHist( oBinaryImages[i]( oInnerRect ), oTBLinesMask );
 
 		// Debug ???
 		Mat histoCopy(oVertHist.histoImg.size(), oVertHist.histoImg.type());
-		if(m_bDebug) 
+		if(m_bDebug)
 		{
 			cvtColor(oVertHist.histoImg, histoCopy, CV_GRAY2RGB);
 			oAnprObject.allHistograms.push_back(histoCopy);
@@ -1247,68 +1355,24 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	}
 
 	// Only use boxes within x range
-	vector<Rect> oBoxesWithinCroppedXRange = getBoxesInXRange( ovAllBoxes, nAdjustedMinX, nAdjustedMaxX );
+	vector<Rect> oBoxesWithinCroppedXRange = getBoxesInXRange( ovAllBoxes, oAnprObject.nAdjustedMinX, oAnprObject.nAdjustedMaxX );
 	if( oBoxesWithinCroppedXRange.size() == 0 )
 	{
-		oAnprObject.oDebugLogs.warn( "ovAllBoxes has %d boxes, yet no box is within [%d, %d]", ovAllBoxes.size(), nAdjustedMinX, nAdjustedMaxX );
+		oAnprObject.oDebugLogs.warn( "ovAllBoxes has %d boxes, yet no box is within [%d, %d]", ovAllBoxes.size(), oAnprObject.nAdjustedMinX, oAnprObject.nAdjustedMaxX );
 		return false;
 	}
 
 	// Now let's re-calculate the median width
-//	FTS_BASE_STACK_ARRAY( int, oBoxesWithinCroppedXRange.size(), oArrWidths );
-//	fillBlobWidthArray2( oArrWidths, oBoxesWithinCroppedXRange );
-//	oAnprObject.nMedianBlobWidth = FTS_BASE_MedianBiasHigh( oArrWidths );
 	oAnprObject.nMedianBlobWidth = FTS_ANPR_Util::findMedianBBWidthOfWoHInRange( oBoxesWithinCroppedXRange, rMinWoH, rMaxWoH, nMinMedianWidth );
 
 	// Select best boxes
-	vector<Rect> candidateBoxes = myBlobDetector.getBestBoxes( oSrcRotated,
+	vector<Rect> candidateBoxes = myBlobDetector.getBestBoxes( oSrc,
 															   oBoxesWithinCroppedXRange,
 															   oAnprObject.nMedianBlobWidth,
 															   oTopLine,
 															   oBottomLine );
 
 	oAnprObject.oDebugLogs.info( "After getBestBoxes() - number of blobs = %d", candidateBoxes.size() );
-
-//	// Chop left and right edge characters to the median width
-//	FTS_BASE_STACK_ARRAY( int, candidateBoxes.size(), oArrBestWidths );
-//	fillBlobWidthArray2( oArrBestWidths, candidateBoxes );
-//	oAnprObject.nMedianBlobWidth = FTS_BASE_MedianBiasHigh( oArrBestWidths );
-//	bool bLeftEdgeCharFixed = false;
-//	bool bRightEdgeCharFixed = false;
-//	if( candidateBoxes.size() > 1 )
-//	{
-//		// Left edge char - only chop if the edge is out of [minX, maxX]
-//		// DV: 23/06/2014 - only remove if more than 50% blob is out of red lines
-//		if(    candidateBoxes[0].width > oAnprObject.nMedianBlobWidth
-//			&& candidateBoxes[0].x < nAdjustedMinX )
-//		{
-//			oAnprObject.oDebugLogs.info( "Left edge char is chopped, w = %d > %d = median width",
-//					candidateBoxes[0].width, oAnprObject.nMedianBlobWidth );
-//			candidateBoxes[0].x    += candidateBoxes[0].width - oAnprObject.nMedianBlobWidth;
-//			candidateBoxes[0].width = oAnprObject.nMedianBlobWidth;
-//
-//			bLeftEdgeCharFixed = true;
-//		}
-//
-//		// Right edge char - only chop if the edge is out of [minX, maxX]
-//		if(    candidateBoxes[candidateBoxes.size() - 1].width > oAnprObject.nMedianBlobWidth
-//			&& candidateBoxes[candidateBoxes.size() - 1].x + candidateBoxes[candidateBoxes.size() - 1].width > nAdjustedMaxX )
-//		{
-//			oAnprObject.oDebugLogs.info( "Right edge char is chopped, w = %d > %d = median width",
-//								candidateBoxes[candidateBoxes.size() - 1].width, oAnprObject.nMedianBlobWidth );
-//			candidateBoxes[candidateBoxes.size() - 1].width = oAnprObject.nMedianBlobWidth;
-//
-//			bRightEdgeCharFixed = true;
-//		}
-//	}
-//
-//	// DEBUG: Draw detected blobs
-//	if( bLeftEdgeCharFixed ) blobs[0].sStatus 				= FTS_IP_SimpleBlobDetector::s_sSTATUS_EDGE_SAVED;
-//	if( bRightEdgeCharFixed ) blobs[blobs.size()-1].sStatus = FTS_IP_SimpleBlobDetector::s_sSTATUS_EDGE_SAVED;
-//	if(m_bDebug)
-//	{
-//		oAnprObject.oFirstBlobImg = drawBlobs( oAnprObject.oFirstBlobImg.data?oAnprObject.oFirstBlobImg:oSrcRotated, blobs );
-//	}
 
 	// Assign new blob candidates, remove blobs outside [minX, maxX]
 	oAnprObject.oDebugLogs.info( "Remove blobs outside [minX, maxX] - number of blobs = %d", candidateBoxes.size() );
@@ -1318,7 +1382,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		FTS_IP_SimpleBlobDetector::SimpleBlob sb( candidateBoxes[i] );
 
 		// DV: 23/06/2014 - only remove if more than 50% blob is out of red lines
-		if( isOutsideXRange( candidateBoxes[i], nAdjustedMinX, nAdjustedMaxX ) )
+		if( isOutsideXRange( candidateBoxes[i], oAnprObject.nAdjustedMinX, oAnprObject.nAdjustedMaxX ) )
 		{
 			if(m_bDebug) oAnprObject.oDebugLogs.info( "WARNING BLOB REMOVAL - EDGE BLOB: x = %d, y = %d", candidateBoxes[i].x, candidateBoxes[i].y );
 			sb.sStatus = FTS_IP_SimpleBlobDetector::s_sSTATUS_EDGE;
@@ -1335,40 +1399,45 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	}
 
 	// Vertical projection
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "HISTOGRAM - number of blobs = %d", blobs.size() );
-	FTS_IP_VerticalHistogram oVertHist( oAnprObject.oMedOtsuThreshBinImg, oTBLinesMask );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "Done vertical projection - number of blobs = %d", blobs.size() );
+	oVertHist.analyzeImage( oAnprObject.oMedOtsuThreshBinImg, oTBLinesMask );
 
-	// MERGE & SPLIT
-	// =====================================================================
-//	FTS_BASE_STACK_ARRAY( int, blobs.size(), oWidthsBeforeMerge );
-//	fillBlobWidthArray( oWidthsBeforeMerge, blobs );
-//	oAnprObject.nMedianBlobWidth = FTS_BASE_MedianBiasHigh( oWidthsBeforeMerge );
+	return true;
+}
+
+void Fts_Anpr_Engine::mergeSplitBlobs( const cv::Mat& oSrc,
+									   const int nMinMedianWidth,
+									   const float rMinWoH,
+									   const float rMaxWoH,
+									   const FTS_BASE_LineSegment& oTopLine,
+									   const FTS_BASE_LineSegment& oBottomLine,
+									   const FTS_IP_VerticalHistogram& oVertHist,
+									   FTS_ANPR_OBJECT& oAnprObject,
+									   FTS_IP_SimpleBlobDetector& myBlobDetector,
+									   vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs )
+{
+	// Merge
 	oAnprObject.nMedianBlobWidth = FTS_ANPR_Util::findMedianBlobWidthOfWoHInRange( blobs, rMinWoH, rMaxWoH, nMinMedianWidth );
-
 	if(m_bDebug)
 	{
 		oAnprObject.oDebugLogs.info( "MERGE & SPLIT" );
-		oAnprObject.oDebugLogs.info( "Before merge Median width = %d; num of blobs = %d", oAnprObject.nMedianBlobWidth, blobs.size() );		
+		oAnprObject.oDebugLogs.info( "Before merge median width = %d; num of blobs = %d", oAnprObject.nMedianBlobWidth, blobs.size() );
 	}
 	myBlobDetector.mergeBlobs( blobs, oAnprObject.nMedianBlobWidth );
 
-	// Re-calculate median width
-//	FTS_BASE_STACK_ARRAY( int, blobs.size(), oWidthsBeforeSplit );
-//	fillBlobWidthArray( oWidthsBeforeSplit, blobs );
-//	oAnprObject.nMedianBlobWidth = FTS_BASE_MedianBiasHigh( oWidthsBeforeSplit );
+	// Split
 	oAnprObject.nMedianBlobWidth = FTS_ANPR_Util::findMedianBlobWidthOfWoHInRange( blobs, rMinWoH, rMaxWoH, nMinMedianWidth );
-
 	if(m_bDebug)
 	{
-		oAnprObject.oDebugLogs.info( "Median width before split = %d", oAnprObject.nMedianBlobWidth );
 		oAnprObject.oDebugLogs.info( "After merge: num of blobs = %d", blobs.size() );
+		oAnprObject.oDebugLogs.info( "Median width before split = %d", oAnprObject.nMedianBlobWidth );
 	}
 	blobs = myBlobDetector.splitBlobs( oVertHist, blobs, (float)oAnprObject.nMedianBlobWidth, (float)oAnprObject.nMedianBlobHeight );
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "After split: num of blobs = %d", blobs.size() );
-	cv::Mat oFirstBlobOutliersRemovedBlobMergedSplitImg = drawBlobs( oSrcRotated, blobs );
+
 
 	// ADJUST X,Y ( 2 overlapped blobs ) and HEIGHT( blob is too short )
-	// =====================================================================
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "After split: num of blobs = %d", blobs.size() );
+	cv::Mat oFirstBlobOutliersRemovedBlobMergedSplitImg = drawBlobs( oSrc, blobs );
 	if(m_bDebug) oAnprObject.oDebugLogs.info( "ADJUST X,Y ( 2 overlapped blobs ) and HEIGHT( blob is too short )" );
 	myBlobDetector.adjustBlobHeight( blobs, (float)oAnprObject.nMedianBlobHeight, oTopLine, oBottomLine );
 
@@ -1376,30 +1445,40 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	if(m_bDebug)
 	{
 		if(!oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg.data)
-			oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg = drawBlobs( oSrcRotated, blobs );
+			oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg = drawBlobs( oSrc, blobs );
 		else
 			oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg = drawBlobs( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg, blobs );
 
 		// Draw lines
 		line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
-			  Point( nMinX, 0 ), Point( nMinX, oSrcRotated.rows-1 ), Scalar(0, 255,255) );
+			  Point( oAnprObject.nMinX, 0 ), Point( oAnprObject.nMinX, oSrc.rows-1 ), Scalar(0, 255,255) );
 		line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
-			  Point( nMaxX, 0 ), Point( nMaxX, oSrcRotated.rows-1 ), Scalar(0, 255,255) );
+			  Point( oAnprObject.nMaxX, 0 ), Point( oAnprObject.nMaxX, oSrc.rows-1 ), Scalar(0, 255,255) );
 
 		line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
-			  Point( nAdjustedMinX, 0 ), Point( nAdjustedMinX, oSrcRotated.rows-1 ), Scalar(0, 0, 255) );
+			  Point( oAnprObject.nAdjustedMinX, 0 ), Point( oAnprObject.nAdjustedMinX, oSrc.rows-1 ), Scalar(0, 0, 255) );
 		line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
-			  Point( nAdjustedMaxX, 0 ), Point( nAdjustedMaxX, oSrcRotated.rows-1 ), Scalar(0, 0, 255) );
+			  Point( oAnprObject.nAdjustedMaxX, 0 ), Point( oAnprObject.nAdjustedMaxX, oSrc.rows-1 ), Scalar(0, 0, 255) );
 	}
+}
 
-	// OCR PREPARATION
-	// =====================================================================
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "Start OCR Preparation " );
-	stringstream ss;
-
+bool Fts_Anpr_Engine::refineBlobsBySize( const cv::Mat& oSrc,
+									     const int nMinMedianWidth,
+									     const float rMinWoH,
+									     const float rMaxWoH,
+									     const bool bUseLocalOtsu,
+									     const int nThresholdType,
+									     const Mat& oMask,
+									     const Mat& oLocalOtsuSubstitue,
+									     FTS_ANPR_OBJECT& oAnprObject,
+									     FTS_IP_SimpleBlobDetector& myBlobDetector,
+									     vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "REFINE BLOBS BY SIZE" );
 	if(m_bDebug) oAnprObject.oDebugLogs.info( "Before using OTSU filter, there are %d characters", blobs.size() );
 
-	cv::Rect oSrcRotatedRect(0, 0, oSrcRotated.cols, oSrcRotated.rows);
+	stringstream ss;
+	cv::Rect oSrcRotatedRect(0, 0, oSrc.cols, oSrc.rows);
 	for( unsigned int i = 0; i < blobs.size(); i++ )
 	{
 		if(m_bDebug) oAnprObject.oDebugLogs.info( "Character %d: [%d, %d, %d, %d]", i+1, blobs[i].oBB.x, blobs[i].oBB.y, blobs[i].oBB.width, blobs[i].oBB.height );
@@ -1408,7 +1487,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 			oAnprObject.oDebugLogs.warn("FOUND NULL BLOBS at %d!!!", i+1);
 			continue;
 		}
-		
+
 		// Character bounding box
 		cv::Mat oCharBin;
 		cv::Rect oExpandedBox( blobs[i].oBB );
@@ -1418,22 +1497,10 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 			continue;
 		}
 
-		if (oExpandedBox.x < 0)
-		{
-			oExpandedBox.x = 0;
-		}
-		if (oExpandedBox.y < 0)
-		{
-			oExpandedBox.y = 0;
-		}
-		if (oExpandedBox.x + oExpandedBox.width > oSrcRotated.cols)
-		{
-			oExpandedBox.width = oSrcRotated.cols - oExpandedBox.x;
-		}
-		if (oExpandedBox.y + oExpandedBox.height > oSrcRotated.rows)
-		{
-			oExpandedBox.height = oSrcRotated.rows - oExpandedBox.y;
-		}
+		if (oExpandedBox.x < 0) oExpandedBox.x = 0;
+		if (oExpandedBox.y < 0) oExpandedBox.y = 0;
+		if (oExpandedBox.x + oExpandedBox.width > oSrc.cols)  oExpandedBox.width = oSrc.cols - oExpandedBox.x;
+		if (oExpandedBox.y + oExpandedBox.height > oSrc.rows) oExpandedBox.height = oSrc.rows - oExpandedBox.y;
 
 #ifdef EXPAND_CHAR_BOX
 		oExpandedBox = FTS_IP_Util::expandRectXY( oCharBox, 1, 1,	oSrcRotated.cols, oSrcRotated.rows );
@@ -1441,7 +1508,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		// Binarize the expanded region using local otsu if enabled, else use alternative
 		if( bUseLocalOtsu )
 		{
-			cv::threshold( oSrcRotated(oExpandedBox), oCharBin, 0, 255, nThresholdType | CV_THRESH_OTSU );
+			cv::threshold( oSrc(oExpandedBox), oCharBin, 0, 255, nThresholdType | CV_THRESH_OTSU );
 		}
 		else
 		{
@@ -1462,33 +1529,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 				 oFinalBox.width  = oSubBox.width;
 				 oFinalBox.height = oSubBox.height;
 
-		if(m_bDebug)
-		{
-			oAnprObject.oDebugLogs.info( "Original char box: x = %d, y = %d, w = %d, h = %d",
-				blobs[i].oBB.x, blobs[i].oBB.y, blobs[i].oBB.width, blobs[i].oBB.height );
-			oAnprObject.oDebugLogs.info( "Expanded char box: x = %d, y = %d, w = %d, h = %d",
-					oExpandedBox.x, oExpandedBox.y, oExpandedBox.width, oExpandedBox.height );
-			oAnprObject.oDebugLogs.info( "Sub box: x = %d, y = %d, w = %d, h = %d",
-					oSubBox.x, oSubBox.y, oSubBox.width, oSubBox.height );
-			oAnprObject.oDebugLogs.info( "Final box: x = %d, y = %d, w = %d, h = %d",
-					oFinalBox.x, oFinalBox.y, oFinalBox.width, oFinalBox.height );
-			oAnprObject.oDebugLogs.info( "oCharBin.width = %d, oCharBin.height = %d", oCharBin.cols, oCharBin.rows );
-		}
-
-//		// DV: 01/07/2014
-//		// After using local otsu to crop the character, use the alternative binary image if enabled
-//		if( !bUseLocalOtsu )
-//		{
-//			oCharBin = oLocalOtsuSubstitue(oExpandedBox).clone();
-//			cv::bitwise_and( oCharBin, oMask(oExpandedBox), oCharBin );
-//		}
 		cv::Mat oROISrc = oCharBin(oSubBox);
-
-		if(m_bDebug)
-		{
-			oAnprObject.oDebugLogs.info( "oCharBin.width = %d, oCharBin.height = %d", oCharBin.cols, oCharBin.rows );
-			oAnprObject.oDebugLogs.info( "oROISrc.width = %d, oROISrc.height = %d", oROISrc.cols, oROISrc.rows ) ;
-		}
 
 		bool b = ( i == 0 || i == blobs.size() - 1 );
 		float rImgMean = mean( oROISrc )[0];
@@ -1497,10 +1538,10 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 			|| ( rImgMean > FTS_IP_SimpleBlobDetector::MIDDLE_CHAR_MAX_FILLED  )
 			|| ( b && rImgMean > FTS_IP_SimpleBlobDetector::EDGE_CHAR_MAX_FILLED  ) )
 		{
-			if(m_bDebug) 
+			if(m_bDebug)
 			{
 				oAnprObject.oDebugLogs.warn( "WARNING BLOB REMOVAL - EDGE MOSTLY FULL OR EMPTY CHAR( LOCAL OTSU BIN )" );
-				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg, 
+				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
 					blobs[i].oBB.tl(), blobs[i].oBB.br(), Scalar( 0, 0, 255 ) );
 				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
 					  Point( blobs[i].oBB.x + blobs[i].oBB.width, blobs[i].oBB.y ),
@@ -1509,13 +1550,15 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 
 			blobs[i].sStatus = FTS_IP_SimpleBlobDetector::s_sSTATUS_REMOVED;
 		}
+
 		//++04.07 trungnt1 Not need here, use later
+		// DV TODO: still need this here?
 		else if( (float)oFinalBox.height < 0.7* blobs[i].oBB.height )
 		{
-			if(m_bDebug) 
+			if(m_bDebug)
 			{
 				oAnprObject.oDebugLogs.warn( "WARNING BLOB REMOVAL - SHORT CHAR( LOCAL OTSU BIN )" );
-				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg, 
+				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
 					blobs[i].oBB.tl(), blobs[i].oBB.br(), Scalar( 0, 0, 255 ) );
 				line( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg,
 					  Point( blobs[i].oBB.x + blobs[i].oBB.width, blobs[i].oBB.y ),
@@ -1524,55 +1567,45 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 
 			blobs[i].sStatus = FTS_IP_SimpleBlobDetector::s_sSTATUS_REMOVED;
 		}
-		//--
 		else
 		{
 			blobs[i].oBB = oFinalBox;	// TODO this ROI is on the original image, NOT padded
 			if(m_bDebug) oAnprObject.oDebugLogs.info( "GOOD CHAR HAS BEEN ADDED" );
 		}
-
-		//if(m_bDebug) oAnprObject.oDebugLogs.info( "");
 	}
 
 	// REMOVE NOISY CHARS
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "REMOVE NOISY CHARS" );
-	removeNoisyBlobs( blobs );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "REMOVE NOISY CHARS, BUT RESERVE THEM" );
+//	removeNoisyBlobs( blobs );
+	moveNoisyBlobs( blobs, oAnprObject.oReservedNoisyBlobs );	// DV: 21/07/2014 - soft remove
 	if( blobs.size() == 0 )
 	{
 		oAnprObject.oDebugLogs.warn( "THERE ARE NONE OF GOOD CHARACTERS TO DO OCR. RETURN NOW." );
 		return false;
 	}
 
-	// DV: 01/07/2014 - Merge again before otsu filter
-	// This is to not only fix H, N cut in half but help better otsu filter too
-	// NB: This is only for top line, because for Vietnam plates, bottom line
-	// does not have "letter"
-//	if(    nMaxNbrOfChar == MAX_NUM_OF_DUAL_LINE_TOP
-//		&& blobs.size() > 2 )
-//	{
-//		// Merge blobs again to fix H,N cut in half
-//		vector<FTS_IP_SimpleBlobDetector::SimpleBlob>::const_iterator first = blobs.begin();
-//		vector<FTS_IP_SimpleBlobDetector::SimpleBlob>::const_iterator last  = blobs.begin() + 2;
-//		vector<FTS_IP_SimpleBlobDetector::SimpleBlob> newVec(first, last);
-//
-//		FTS_BASE_STACK_ARRAY( int, newVec.size(), oWidthsBefore2ndMerge );
-//		fillBlobWidthArray( oWidthsBefore2ndMerge, newVec );
-//		int nMedianToplineFirst2BlobWidth = FTS_BASE_MedianBiasHigh( oWidthsBefore2ndMerge );
-//		if(m_bDebug) oAnprObject.oDebugLogs.info( "MERGE THE 2ND TIME - median width = %d", nMedianToplineFirst2BlobWidth );
-//		myBlobDetector.mergeBlobs( blobs, nMedianToplineFirst2BlobWidth );
-//	}
-	int nMedianToplineFirst2BlobWidth = FTS_ANPR_Util::findMedianBlobWidthOfWoHInRange( blobs, rMinWoH, rMaxWoH, nMinMedianWidth );
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "MERGE THE 2ND TIME - median width = %d", nMedianToplineFirst2BlobWidth );
-	myBlobDetector.mergeBlobs( blobs, nMedianToplineFirst2BlobWidth );
+	int nMedianBlobWidth = FTS_ANPR_Util::findMedianBlobWidthOfWoHInRange( blobs, rMinWoH, rMaxWoH, nMinMedianWidth );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "Merge again - median width = %d", nMedianBlobWidth );
+	myBlobDetector.mergeBlobs( blobs, nMedianBlobWidth );
 
-	// OTSU FILTER TO REMOVE EDGE CHARS
-	// =====================================================================
+	return true;
+}
+
+void Fts_Anpr_Engine::removeNoisesByOtsu( const cv::Mat& oSrc,
+										  const bool bUseLocalOtsu,
+										  const int nThresholdType,
+										  const int nMaxNbrOfChar,
+										  FTS_ANPR_OBJECT& oAnprObject,
+										  vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "REMOVE NOISES BY MEDIAN OTSU" );
+
 	vector<double> rvOtsuVals;
 	for( size_t i = 0; i < blobs.size(); i++ )
 	{
 		// Binarize the expanded region using otsu
 		Mat oTmpBin;
-		double rCharOtsuThresh = cv::threshold( oSrcRotated(blobs[i].oBB), oTmpBin, 0, 255, nThresholdType | CV_THRESH_OTSU );
+		double rCharOtsuThresh = cv::threshold( oSrc(blobs[i].oBB), oTmpBin, 0, 255, nThresholdType | CV_THRESH_OTSU );
 		rvOtsuVals.push_back( rCharOtsuThresh );
 	}
 
@@ -1608,7 +1641,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	// Mean otsu
 	// DV: 03/07/2014 - Otsu filter now has soft and hard threshold
 	// TODO: tuning?
-	double MAX_OTSU_DIST_SOFT = 30.0;
+	double MAX_OTSU_DIST_SOFT = bUseLocalOtsu ? 30.0 : 40;	// DV TODO 40 or 50?
 	double MAX_OTSU_DIST_HARD = 70.0;
 	double sum = accumulate( rRefinedOtsuVals.begin(), rRefinedOtsuVals.end(), 0.0 );
 	double mean = sum / rRefinedOtsuVals.size();
@@ -1623,15 +1656,19 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	for( size_t i = 0; i < rvOtsuVals.size(); i++ )
 	{
 		Scalar color;
-		double rDistMean   = abs( rvOtsuVals[i] - mean );
+		double rDistMean      = rvOtsuVals[i] - mean;
+		double rDistMeanAbs   = abs( rvOtsuVals[i] - mean );
 		double rDistMedian = abs( rvOtsuVals[i] - rMedOtsu );
-		if(m_bDebug) oAnprObject.oDebugLogs.info( "rDistMean = %f, rDistMedian = %f", rDistMean/stdev, rDistMedian/stdev);
+		if(m_bDebug) oAnprObject.oDebugLogs.info( "rDistMean = %f, rDistMedian = %f", rDistMeanAbs/stdev, rDistMedian/stdev);
 
 		bool bIsEdgeBlob 	= ( i == 0 || i == blobs.size() - 1 );	// most left or most right char
-		bool bIsOtsuOutlierSoft = rDistMean > MAX_OTSU_DIST_SOFT;	// otsu outlier
-		bool bIsOtsuOutlierHard = rDistMean > MAX_OTSU_DIST_HARD;
 
-		if( rDistMean < 3*stdev ) color = Scalar( 0, 255, 0 );			// green
+		// DV: 21/07/2014 - For black char, we just want to filter white blobs, and vice versa
+//		bool bIsOtsuOutlierSoft = rDistMeanAbs > MAX_OTSU_DIST_SOFT;	// otsu outlier
+		bool bIsOtsuOutlierSoft = bBlackChar ? ( rDistMean > MAX_OTSU_DIST_SOFT ) : ( -rDistMean > MAX_OTSU_DIST_SOFT );	// otsu outlier
+		bool bIsOtsuOutlierHard = rDistMeanAbs > MAX_OTSU_DIST_HARD;
+
+		if( rDistMeanAbs < 3*stdev ) color = Scalar( 0, 255, 0 );			// green
 		else
 		{
 			color = Scalar( 0, 0, 255 );
@@ -1639,7 +1676,7 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 			Rect oBox( blobs[i].oBB );
 			Point2f oCenter( oBox.x + (float)oBox.width/2, oBox.y + (float)oBox.height/2 );
 			// DV: 23/06/2014 - only remove if more than 50% blob is out of red lines
-			if( isOutsideXRange( oBox, nMinX, nMaxX ) )
+			if( isOutsideXRange( oBox, oAnprObject.nMinX, oAnprObject.nMaxX ) )
 			{
 				circle( oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg, oCenter, oBox.width/2, Scalar( 0, 0, 255 ), CV_FILLED );
 
@@ -1714,18 +1751,34 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	}
 
 	// REMOVE EDGE CHARS
-	removeNoisyBlobs( blobs );
+//	removeNoisyBlobs( blobs );
+	moveNoisyBlobs( blobs, oAnprObject.oReservedNoisyBlobs );	// DV: 21/07/2014 - soft remove
+}
 
-	//OCRInput input;
-	vector<Rect> newBestCharBoxes (blobs.size());
-	blobs2Rects( blobs, newBestCharBoxes, nPaddedBorder, nPaddedBorder, srcPadded.cols-1, srcPadded.rows-1 );
+bool Fts_Anpr_Engine::refineBlobsByHeuristic( const cv::Mat& oSrc,
+											  const int nPaddedBorder,
+											  const bool bUseLocalOtsu,
+											  const int nThresholdType,
+											  const int nMinMedianWidth,
+											  const float rMinWoH,
+											  const float rMaxWoH,
+											  const Mat& oLocalOtsuSubstitue,
+											  const vector<Mat>& oBinaryImages,
+											  const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+											  FTS_ANPR_OBJECT& oAnprObject,
+											  FTS_IP_SimpleBlobDetector& myBlobDetector,
+											  vector<Rect>& newBestCharBoxes,
+											  vector<Mat>& oMaskBinaries )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "REFINE BLOBS BY HEURISTIC" );
+	blobs2Rects( blobs, newBestCharBoxes, nPaddedBorder, nPaddedBorder, oSrc.cols + nPaddedBorder, oSrc.rows + nPaddedBorder );
 
 	// Remove mostly empty blobs
 	vector<Rect> oCandidatesAfterEmptyBoxesRemoved = myBlobDetector.removeEmptyBoxes( oBinaryImages, newBestCharBoxes);
 	if(m_bDebug)
 	{
 		if(!oAnprObject.oTestEmptyBlob.data)
-			cvtColor( oSrcRotated, oAnprObject.oTestEmptyBlob, CV_GRAY2BGR );
+			cvtColor( oSrc, oAnprObject.oTestEmptyBlob, CV_GRAY2BGR );
 		for( size_t i = 0; i < newBestCharBoxes.size(); i++ )
 		{
 			rectangle( oAnprObject.oTestEmptyBlob, newBestCharBoxes[i], Scalar(0,0,255) );
@@ -1736,25 +1789,15 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		}
 	}
 
-	// DV: 01/07/2014 - Remove noises of top line
-	// NB: TODO: This is ONLY for Vietnam plates
-//	if(    nMaxNbrOfChar == MAX_NUM_OF_DUAL_LINE_TOP
-//		&& oCandidatesAfterEmptyBoxesRemoved.size() > 2 )
-//	{
-//		// Merge blobs again to fix H,N cut in half
-//		vector<Rect>::const_iterator first = oCandidatesAfterEmptyBoxesRemoved.begin();
-//		vector<Rect>::const_iterator last  = oCandidatesAfterEmptyBoxesRemoved.begin() + 2;
-//		vector<Rect> newVec(first, last);
-//
-//		FTS_BASE_STACK_ARRAY( int, newVec.size(), oWidthsBefore2ndMerge );
-//		fillBlobWidthArray2( oWidthsBefore2ndMerge, newVec );
-//		int nMedianToplineFirst2BlobWidth = FTS_BASE_MedianBiasHigh( oWidthsBefore2ndMerge );
-//		if(m_bDebug) oAnprObject.oDebugLogs.info( "MERGE THE 2ND TIME - median width = %d", oAnprObject.nMedianBlobWidth );
-//		myBlobDetector.mergeBlobsVector( oCandidatesAfterEmptyBoxesRemoved, nMedianToplineFirst2BlobWidth );
-//	}
-	nMedianToplineFirst2BlobWidth = FTS_ANPR_Util::findMedianBBWidthOfWoHInRange( oCandidatesAfterEmptyBoxesRemoved, rMinWoH, rMaxWoH, nMinMedianWidth );
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "MERGE THE 3RD TIME - median width = %d", nMedianToplineFirst2BlobWidth );
-	myBlobDetector.mergeBlobsVector( oCandidatesAfterEmptyBoxesRemoved, nMedianToplineFirst2BlobWidth );
+	// DV: 28/07/2014 - fix error "SS_BASE_StackArray<T>::SS_BASE_StackArray(T*, unsigned int) [with T = int]: Assertion `nSize != 0' failed."
+	if( oCandidatesAfterEmptyBoxesRemoved.size() == 0 )
+	{
+		oAnprObject.oDebugLogs.warn( "Warning: No more blobs after Remove mostly empty blobs." );
+		return false;
+	}
+	int nMedianBlobWidth = FTS_ANPR_Util::findMedianBBWidthOfWoHInRange( oCandidatesAfterEmptyBoxesRemoved, rMinWoH, rMaxWoH, nMinMedianWidth );
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "MERGE THE 3RD TIME - median width = %d", nMedianBlobWidth );
+	myBlobDetector.mergeBlobsVector( oCandidatesAfterEmptyBoxesRemoved, nMedianBlobWidth );
 
 	// DV: 03/07/2014 - Chop edge chars to median width
 	chopEdgeCharToMedianWidth( oCandidatesAfterEmptyBoxesRemoved );
@@ -1764,8 +1807,8 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 	// Get final clean chars
 	if(!oAnprObject.oCleanCharBin.data)
 	{
-		oAnprObject.oCleanCharBin = cv::Mat::zeros( srcPadded.size(), srcPadded.type() );
-		
+		oAnprObject.oCleanCharBin = cv::Mat::zeros( Size( oSrc.cols + 2*nPaddedBorder, oSrc.rows + 2*nPaddedBorder), oSrc.type() );
+
 	}
 	//++29.06 trungnt1 add to specify the line of char boxes
 	int nLinePos = (oAnprObject.oBestCharBoxes.size() > 0) ? 1 : 0; //0 => top line, 1: bottom line;
@@ -1778,7 +1821,13 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		cv::Mat oROISrc;
 		if( bUseLocalOtsu )
 		{
-			threshold( srcPadded(newBestCharBoxes[i]), oROISrc, 0, 255, nThresholdType | CV_THRESH_OTSU );
+			Rect oOriginalLocalRect( newBestCharBoxes[i] );
+			oOriginalLocalRect.x -= nPaddedBorder;			
+			oOriginalLocalRect.y -= nPaddedBorder;
+			//27.07 trungnt1 fixed
+			if(oOriginalLocalRect.x < 0) oOriginalLocalRect.x = 0;
+			if(oOriginalLocalRect.y < 0) oOriginalLocalRect.y = 0;
+			threshold( oSrc(oOriginalLocalRect), oROISrc, 0, 255, nThresholdType | CV_THRESH_OTSU );
 		}
 		else
 		{
@@ -1789,10 +1838,9 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		oROISrc.copyTo( oROIDst );
 		oAnprObject.oBestCharBoxes.push_back(newBestCharBoxes[i]);
 		oAnprObject.oCharPosLine.push_back(nLinePos);	//29.06 define char box line position
-	}	
+	}
 
-	if(m_bDebug) oAnprObject.oDebugLogs.info( "CHARACTER PREPARATION for OCR ..." );
-	vector<Mat> oMaskBinaries(oBinaryImages.size());
+	oMaskBinaries.resize(oBinaryImages.size());
 	for( size_t i = 0; i < oBinaryImages.size(); i++ )
 	{
 		// Mask char regions
@@ -1805,6 +1853,14 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 		}
 	}
 
+	return true;
+}
+
+void Fts_Anpr_Engine::finalizeBinImagesForOCR( const vector<Mat>& oMaskBinaries,
+											   const vector<Mat>& oBinaryImages,
+											   const bool bUseLocalOtsu,
+											   FTS_ANPR_OBJECT& oAnprObject )
+{
 	// Do OCR on 4 best binary images
 	// 1. Wolfzilion 1
 	// 2. Adaptive 15
@@ -1839,39 +1895,390 @@ bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
 			bitwise_or(oAnprObject.oBestBinImages[3], oMaskBinaries[2], oAnprObject.oBestBinImages[3]);
 		}
 	}
-	
+}
 
-#ifdef GUI
-	if(m_bDebug)
-	{		
-		//Column 1
-		//FTS_GUI_DisplayImage::ShowAndScaleBy2( "Rotated", oSrc,
-		//			FTS_GUI_DisplayImage::SCALE_X,
-		//			FTS_GUI_DisplayImage::SCALE_Y,0, 0 );
-		//FTS_GUI_DisplayImage::ShowAndScaleBy2( "Hist", histoCopy, FTS_GUI_DisplayImage::SCALE_X,
-		//			FTS_GUI_DisplayImage::SCALE_Y, 0, 400 );
+void Fts_Anpr_Engine::fixVietnamTopLineBlobs( const int nMaxNbrOfChar,
+											  FTS_ANPR_OBJECT& oAnprObject,
+											  vector< vector<Rect> >& charRegionsFinal2D )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "This is the top line of Vietnam plate so let's find the middle gap bb" );
 
-		/*FTS_GUI_DisplayImage::ShowAndScaleBy2( "LSD images", oAnprObject.oLinesImg, FTS_GUI_DisplayImage::SCALE_X,
-				FTS_GUI_DisplayImage::SCALE_Y, 0, 400 );
+	// Get the middle X - the middle vertical line of the 2 red lines on the debug image
+	int nGuessedMiddleX = oAnprObject.nAdjustedMinX + ( oAnprObject.nAdjustedMaxX - oAnprObject.nAdjustedMinX ) / 2;
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "The estimate middle X of the plate is nGuessedMiddleX = %d", nGuessedMiddleX );
 
-		FTS_GUI_DisplayImage::ShowAndScaleBy2( "First attempt", oAnprObject.oFirstBlobImg, FTS_GUI_DisplayImage::SCALE_X,
-				FTS_GUI_DisplayImage::SCALE_Y, 860, 110 );
-
-		FTS_GUI_DisplayImage::ShowAndScaleBy2( "First attempt, outliers, merged, split, height", 
-			oAnprObject.oFirstBlobOutliersRemovedBlobMergedAdjustHeightImg, FTS_GUI_DisplayImage::SCALE_X,
-				FTS_GUI_DisplayImage::SCALE_Y, 860, 500 );
-
-		FTS_GUI_DisplayImage::ShowAndScaleBy2( "Blob Bounding Polygon", oAnprObject.oLines, FTS_GUI_DisplayImage::SCALE_X,
-				FTS_GUI_DisplayImage::SCALE_Y, 860, 600 );
-
-		FTS_GUI_DisplayImage::ShowAndScaleBy2( "OTSU HIST MEAN", oAnprObject.otsuHistByMean, 1.0, 1.0, 0, 0 );
-		FTS_GUI_DisplayImage::ShowAndScaleBy2( "Clean Char", oAnprObject.oCleanCharBin, 1.0, 1.0, 500, 0 );*/
-
-		oAnprObject.oDebugLogs.info( "After adjust, MinX = %d, MaxX = %d, width = %d", nMinX, nMaxX, (nXLimit+1) );
+	// CASE 1: Find the middle blob
+	//         After case 1 is done, case 2 will further handle the rest
+	bool bMiddleLineCutMiddleBlob  = false;
+	Rect oMiddleBlobBB;
+	int nMiddleBlobIdx = -1;
+	vector<Rect>& oBoxes = charRegionsFinal2D[0];
+	for( size_t i = 0; i < oBoxes.size(); i++ )
+	{
+		if(    i > 0
+			&& ( nGuessedMiddleX > oBoxes[i].x && ( nGuessedMiddleX < oBoxes[i].x + oBoxes[i].width ) ) )
+		{
+			bMiddleLineCutMiddleBlob = true;
+			oMiddleBlobBB = oBoxes[i];
+			nMiddleBlobIdx = i;
+			break;
+		}
 	}
+	if( bMiddleLineCutMiddleBlob && (int)oBoxes.size() > nMaxNbrOfChar )
+	{
+		if(m_bDebug) oAnprObject.oDebugLogs.info( "FOUND THE MIDDLE BLOB CUT THRU BY THE MIDDLE X LINE" );
+		oAnprObject.oTopLineMiddleGapBB = oMiddleBlobBB;
+
+		for( size_t i = 0; i < charRegionsFinal2D.size(); i++ )
+		{
+			charRegionsFinal2D[i].erase( charRegionsFinal2D[i].begin() + nMiddleBlobIdx );
+		}
+	}
+
+
+	// CASE 2: Find the middle gap
+	// Find the max gap between 2 consecutive blobs
+	// The idea is if this max gap is cut through by the middle vertical line then it's the gap
+	bool bMiddleLineCutMiddleGapBB = false;
+	Rect oMiddleGapBB;
+	vector<float> rvInterDist;
+	for( size_t i = 0; i < oBoxes.size() - 1; i++ )
+	{
+		rvInterDist.push_back( (float)( oBoxes[i+1].x - ( oBoxes[i].x + oBoxes[i].width ) ) );
+	}
+	int nMaxIdx = FTS_BASE_MaxElementIndex( rvInterDist.begin(), rvInterDist.end() );
+
+	oMiddleGapBB.x      = oBoxes[nMaxIdx].x + oBoxes[nMaxIdx].width;
+	oMiddleGapBB.y      = oBoxes[nMaxIdx].y;
+	oMiddleGapBB.width  = rvInterDist[nMaxIdx];
+	oMiddleGapBB.height = oBoxes[nMaxIdx].height;
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "The max gap between 2 blobs, nMaxIdx = %d, x = %d, w =%d",
+											  nMaxIdx,oMiddleGapBB.x, oMiddleGapBB.width );
+
+	bMiddleLineCutMiddleGapBB = nGuessedMiddleX > oMiddleGapBB.x && ( nGuessedMiddleX < oMiddleGapBB.x + oMiddleGapBB.width );
+
+	// Check is the middle gap or middle blob is found
+	int nCharsOnEachHalf = MAX_NUM_OF_DUAL_LINE_TOP / 2;	// = 2
+	if( bMiddleLineCutMiddleGapBB )
+	{
+		if(m_bDebug) oAnprObject.oDebugLogs.info( "Found the middle gap is cut thru by the middle vertical line" );
+		oAnprObject.oTopLineMiddleGapBB = oMiddleGapBB;
+
+		// Take the middle vertical line as the center
+		// From there to the left or right, there are maximum 2 characters, so any blobs outside that are removed
+		// Find left index
+		int nCountLeft = 0;
+		int iFoundLeft = 0;
+		for( size_t i = oBoxes.size(); i-- > 0; )
+		{
+			if( nGuessedMiddleX > oBoxes[i].x  )
+			{
+				nCountLeft++;
+			}
+
+			if( nCountLeft == nCharsOnEachHalf )	// there are maximum 2 characters from the center
+			{
+				iFoundLeft = i;
+			}
+		}
+
+		// Find right index
+		int nCountRight = 0;
+		int iFoundRight = oBoxes.size();
+		for( size_t i = 0; i < oBoxes.size(); i++ )
+		{
+			if( nGuessedMiddleX < oBoxes[i].x  )
+			{
+				nCountRight++;
+			}
+
+			if( nCountRight == nCharsOnEachHalf )	// there are maximum 2 characters from the center
+			{
+				iFoundRight = i+1;
+			}
+		}
+
+		// Extract the sub-vector between [iFoundLeft; iFoundRight]
+		// This is to remove redundant characters
+		if( !( iFoundLeft == 0 && iFoundRight == (int)oBoxes.size() ) )
+		{
+			for( size_t i = 0; i < charRegionsFinal2D.size(); i++ )
+			{
+				vector<Rect>& oBoxes = charRegionsFinal2D[i];
+				vector<Rect>::const_iterator first = oBoxes.begin() + iFoundLeft ;
+				vector<Rect>::const_iterator last  = oBoxes.begin() + iFoundRight;
+				vector<Rect> newVec(first, last);
+
+				oBoxes = newVec;
+			}
+		}
+
+//		// Now there are still cases characters are missing, try to recover
+//		if( nCountLeft < nCharsOnEachHalf && nCountRight < nCharsOnEachHalf )
+//		{
+//			if(m_bDebug) oAnprObject.oDebugLogs.info( "This is likely a plate with only 2 characters on the top line" );
+//			return;
+//		}
+//
+//		int nMiddleGapCenterX = oAnprObject.oTopLineMiddleGapBB.x + (int)( oAnprObject.oTopLineMiddleGapBB.width / 2 );
+//		if( nCountLeft < nCharsOnEachHalf )
+//		{
+//
+//			return;
+//		}
+
+	}
+}
+
+void Fts_Anpr_Engine::storeFinalBlobs( const vector< vector<Rect> >& charRegionsFinal2D,
+									   FTS_ANPR_OBJECT& oAnprObject )
+{
+	if( oAnprObject.charRegions2D.size() == 0 )
+	{
+		oAnprObject.charRegions2D = charRegionsFinal2D;
+	}
+	else
+	{
+		assert( oAnprObject.charRegions2D.size() == charRegionsFinal2D.size() );
+
+		// append blobs
+		for( size_t i = 0; i < charRegionsFinal2D.size(); i++ )
+		{
+			oAnprObject.charRegions2D[i].insert( oAnprObject.charRegions2D[i].end(),
+												 charRegionsFinal2D[i].begin(), charRegionsFinal2D[i].end() );
+		}
+	}
+}
+
+bool Fts_Anpr_Engine::doSegment( const cv::Mat& oSrc,
+							     const cv::Mat& oMask,
+							     const bool bSingleLine,
+							     const bool bBlackChar,
+							     const int nInputMinX,		// soft bound by cropping
+							     const int nInputMaxX,		// soft bound by cropping
+							     const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oInputBlobs,
+							     vector<Mat>& oBinaryImages,
+							     const int nMaxNbrOfChar,
+							     FTS_ANPR_OBJECT& oAnprObject,
+								 bool bUseLocalOtsu )
+{
+#ifdef TRY_LSD
+	Test_LSD( oSrc, oAnprObject.oLinesImg );
 #endif
 
+	// DV: 01/07/2014 - if not using local otsu, replace it by the adaptive block = 19
+	assert( oBinaryImages.size() > 4 );
+	Mat oLocalOtsuSubstitue = oBinaryImages[4];	// TODO: only good if adaptive is good
+
+	// Padding - Contours work better on padded images???? I doubt it
+	// TODO remove it????
+	int nPaddedBorder = 1;
+
+	// Binarization type
+	const int nThresholdType = bBlackChar ? CV_THRESH_BINARY_INV : CV_THRESH_BINARY;
+
+	// FIND BLOBS IF NOT ANY FOUND EARLIER - ALSO SORT BLOBS BY X COORDS
+	// =====================================================================
+	FTS_IP_SimpleBlobDetector::Params params;
+	FTS_IP_SimpleBlobDetector myBlobDetector(params);
+							  myBlobDetector.m_poANPRObject = &oAnprObject;
+	vector<FTS_IP_SimpleBlobDetector::SimpleBlob> blobs;
+	if( !findAllBlobsIfNotDone( oInputBlobs,
+							    oSrc,
+							    oMask,
+							    bSingleLine,
+							    nPaddedBorder,
+							    nMaxNbrOfChar,
+							    oAnprObject,
+							    oBinaryImages,
+							    myBlobDetector,
+							    blobs ) )
+	{
+		return false;
+	}
+
+	// REFINE BLOBS WITHIN X RANGE, ALSO CALC MEDIAN VALUES OF BLOBS
+	// =====================================================================
+	vector<FTS_IP_SimpleBlobDetector::SimpleBlob> oBlobsWithinCroppedXRange;
+	int nValidMinX, nValidMaxX;
+	int nMinMedianWidth = 0, nMinMedianHeight = 0;
+	float rMinWoH = 0.25;	// DV: 14/07/2014 - 1,I, or thin characters should not contribute to the median width
+	float rMaxWoH = 0.8;	// TODO: i think these values are safe.
+	if( !refineBlobsInRange( oSrc,
+			  	  	  	     nInputMinX,		// soft bound by cropping
+							 nInputMaxX,		// soft bound by cropping
+							 blobs,
+							 bUseLocalOtsu,
+							 nThresholdType,
+							 nPaddedBorder,
+							 oLocalOtsuSubstitue,
+							 nMinMedianWidth,
+							 nMinMedianHeight,
+							 rMinWoH,
+							 rMaxWoH,
+							 oAnprObject,
+							 oBlobsWithinCroppedXRange,
+							 nValidMinX,
+							 nValidMaxX ) )
+	{
+		return false;
+	}
+
+
+	// FIND PLATE BOUNDARIES
+	// =====================================================================
+	FTS_BASE_LineSegment oTopLine, oBottomLine;
+	Mat oTBLinesMask;
+	findPlateBoundaries( oSrc,
+					     blobs,
+					     params.minRepeatability,
+					     nValidMinX,
+					     nValidMaxX,
+					     myBlobDetector,
+					     oAnprObject,
+					     oTopLine,
+					     oBottomLine,
+					     oTBLinesMask );
+
+	// FIND BLOBS BY VERTICAL PROJECTIONS / HISTOGRAM
+	// =====================================================================
+	FTS_IP_VerticalHistogram oVertHist;
+	if( !findBlobsByVerticalProjection( oSrc,
+			 nPaddedBorder,
+			 nMinMedianWidth,
+			 rMinWoH,
+			 rMaxWoH,
+			 oTBLinesMask,
+			 oTopLine,
+			 oBottomLine,
+			 oAnprObject,
+			 oBinaryImages,
+			 myBlobDetector,
+			 blobs,
+			 oVertHist ) )
+	{
+		return false;
+	}
+
+	// MERGE & SPLIT
+	// =====================================================================
+	mergeSplitBlobs( oSrc,
+					 nMinMedianWidth,
+					 rMinWoH,
+					 rMaxWoH,
+					 oTopLine,
+					 oBottomLine,
+					 oVertHist,
+					 oAnprObject,
+					 myBlobDetector,
+					 blobs );
+
+	// REFINE BLOBS BY SIZE
+	// =====================================================================
+	if( !refineBlobsBySize( oSrc,
+							nMinMedianWidth,
+							rMinWoH,
+							rMaxWoH,
+							bUseLocalOtsu,
+							nThresholdType,
+							oMask,
+							oLocalOtsuSubstitue,
+							oAnprObject,
+							myBlobDetector,
+							blobs ) )
+	{
+		return false;
+	}
+
+	// OTSU FILTER TO REMOVE EDGE CHARS
+	// =====================================================================
+	removeNoisesByOtsu( oSrc,
+						bUseLocalOtsu,
+						nThresholdType,
+						nMaxNbrOfChar,
+						oAnprObject,
+						blobs );
+
+	// AGGRESSIVE SHORT, EMPTY, FULL BLOBS REMOVAL ACROSS ALL BINARY IMAGES
+	// =====================================================================
+	vector<Rect> newBestCharBoxes(blobs.size());
+	vector<Mat> oMaskBinaries;
+	if( !refineBlobsByHeuristic( oSrc,
+							nPaddedBorder,
+							bUseLocalOtsu,
+							nThresholdType,
+							nMinMedianWidth,
+							rMinWoH,
+							rMaxWoH,
+							oLocalOtsuSubstitue,
+							oBinaryImages,
+							blobs,
+							oAnprObject,
+							myBlobDetector,
+							newBestCharBoxes,
+							oMaskBinaries ) )
+	{
+		return false;
+	}
+
+	// PREPARE BINARY IMAGES FOR OCR
+	// =====================================================================
+	finalizeBinImagesForOCR( oMaskBinaries,
+							 oBinaryImages,
+							 bUseLocalOtsu,
+							 oAnprObject );
+	
+	// AGGRESSIVE SHORT, EMPTY, FULL BLOBS REMOVAL ACROSS ALL BINARY IMAGES
+	// =====================================================================
+	// DV: 21/07/2014 - Get final exact BB, short or mostly empty or mostly full blobs are also detected
+	// This was previously done in plateOcr(), which is unusual, so it's moved here now
+	vector< vector<Rect> > charRegionsFinal2D = removeNoisesAcrossBinaryImages( oAnprObject.oBestBinImages,
+																			    newBestCharBoxes,
+																			    oAnprObject );
+
+	// DV: 21/07/2014 - TODO find top line middle gap
+	// If top line of Vietnam plate then find the middle gap bb
+	// This is very specific to Vietnamese dual-line( likely bike ) plates
+	// We try to find either one of 2 things:
+	// + the middle gap
+	// + the middle blob( when the middle gap is mistakenly segmented as a blob )
+	if(    m_oParams.nLocale == ANPR_LOCALE_VN
+		&& nMaxNbrOfChar == MAX_NUM_OF_DUAL_LINE_TOP
+		&& charRegionsFinal2D[0].size() > 1 )	// must have more than 1 blob
+	{
+		fixVietnamTopLineBlobs( nMaxNbrOfChar, oAnprObject, charRegionsFinal2D );
+	}
+
+	// STORE FINAL SEGMENTED BLOBS
+	// =====================================================================
+	// DV: 23/06/2014 - append blobs from both top & bottom lines
+	storeFinalBlobs( charRegionsFinal2D, oAnprObject );
+
 	return true;
+}
+
+
+/**
+ * This functions does a few jobs:
+ * 1. It find the exact bb of blobs
+ * 2. It go thru all binary images and examine if a blob is too short, mostly empty, or mostly full
+ * 3. .........
+ */
+vector< vector<Rect> > Fts_Anpr_Engine::removeNoisesAcrossBinaryImages( const vector<Mat> & oBestBinImages,
+									 	 	 	 	   	   	   	   	    const vector<Rect>& oBestCharBoxes,
+																		FTS_ANPR_OBJECT& oAnprObject )
+{
+	if(m_bDebug) oAnprObject.oDebugLogs.info( "REMOVE NOISES ACROSS BINARY IMAGES" );
+	// Get exact boundaries
+	vector< vector<Rect> > charRegions2D = getExactCharBB(oBestBinImages, oBestCharBoxes );
+
+	// DV: 16/06/2014 - Find short, mostly full, mostly empty blobs by going through all binary images
+	vector< vector<Rect> > charRegionsFinal2D = getCorrectSizedCharRegions( oBestBinImages,
+																			oBestCharBoxes,
+																			charRegions2D,
+																			oAnprObject );
+
+	return charRegionsFinal2D;
 }
 
 bool Fts_Anpr_Engine::chopEdgeCharToMedianWidth( vector<Rect>& candidateBoxes )
@@ -1962,6 +2369,28 @@ void Fts_Anpr_Engine::removeNoisyBlobs( vector<FTS_IP_SimpleBlobDetector::Simple
 		if(    strcmp( it->sStatus.c_str(), FTS_IP_SimpleBlobDetector::s_sSTATUS_CANDIDATE.c_str() ) != 0
 			&& strcmp( it->sStatus.c_str(), FTS_IP_SimpleBlobDetector::s_sSTATUS_EDGE_SAVED.c_str() ) != 0 )
 		{
+			it = blobs.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
+void Fts_Anpr_Engine::moveNoisyBlobs( vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+									  vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& reservedNoisyBlobs )
+{
+	vector<FTS_IP_SimpleBlobDetector::SimpleBlob>::iterator it = blobs.begin();
+	for ( ; it != blobs.end(); )
+	{
+		if(    strcmp( it->sStatus.c_str(), FTS_IP_SimpleBlobDetector::s_sSTATUS_CANDIDATE.c_str() ) != 0
+			&& strcmp( it->sStatus.c_str(), FTS_IP_SimpleBlobDetector::s_sSTATUS_EDGE_SAVED.c_str() ) != 0 )
+		{
+			// add it to the reserved vector for later use
+			reservedNoisyBlobs.push_back( *it );
+
+			// Erase
 			it = blobs.erase(it);
 		}
 		else
@@ -2278,8 +2707,6 @@ vector< vector<Rect> > Fts_Anpr_Engine::getCorrectSizedCharRegions( const vector
 
 		charRegionsFinal2D.push_back( charRegionsFinal );
 	}
-
-//	if(this->m_bDebug && this->m_bDisplayDbgImg) FTS_GUI_DisplayImage::ShowGroupScaleBy2( "bins", 1.0, oBinsColor, 1 );
 
 	return charRegionsFinal2D;
 }

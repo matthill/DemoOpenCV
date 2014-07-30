@@ -297,7 +297,7 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 			ccCarLaneViolation.clear();
 		} else {
 			if (bDebug) {
-				std::string status = "Modeling background...";
+				std::string status = "Preprocessing...";
 				putText(imgOverlay, status, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255), 2, 8, false);
 				//
 				resize(imgOverlay, imgOverlay, Size(imgOverlay.cols / 2, imgOverlay.rows / 2));

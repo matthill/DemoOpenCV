@@ -134,3 +134,4 @@ FTS_BASE_LineSegment FTS_BASE_LineSegment::getParallelLine(float distance)
   return result;
 }
 
+

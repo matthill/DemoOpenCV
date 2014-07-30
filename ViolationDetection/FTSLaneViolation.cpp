@@ -1,10 +1,8 @@
 #include "CVUtil.h"
 #include "FTSLaneViolation.h"
 #include "OpticalFlowTracker.h"
-#include "FTSTaskQueue.h"
 
-
-void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>& taskQueue) {
+void FTSLaneViolation::operator()(FTSCamera camInfo) {
 	cv::Mat img, imgFrame, imgBack, imgFore, imgRoiWhole, imgOverlay;
 	std::vector< std::vector<cv::Point> > vContours;
 	cv::Rect rectRange;
@@ -13,7 +11,7 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 	//open video stream
 	cv::VideoCapture video(camInfo.strVideoSrc);
 	if (!video.isOpened()) {
-		reconnectVideoSource(camInfo, taskQueue);
+		reconnectVideoSource(camInfo);
 		return;
 	}
 
@@ -111,7 +109,7 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 	CTracker carTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
 	CTracker vehicleTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
 
-	unsigned int index = 0;
+	int index = 0;
 	for (; video.read(img);) {
 		BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_TRACE) << "Frame " << index;
 
@@ -153,7 +151,7 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 						std::string strTimeViolation = "";
 						if (camInfo.strVideoSrc.length() > 0)
 							strTimeViolation = getCurrentTimeInVideoAsString(fFrameRate, index);
-						handleViolation(img, rectRange, this->fScaleRatio, trackedBike, strTimeViolation, camInfo, VEHICLE_BIKE, LANE_VIOLATION, taskQueue);
+						handleViolation(img, rectRange, this->fScaleRatio, trackedBike, strTimeViolation, camInfo, VEHICLE_BIKE, LANE_VIOLATION);
 					}
 
 					//mark bike violation
@@ -175,7 +173,7 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 						std::string strTimeViolation = "";
 						if (camInfo.strVideoSrc != "")
 							strTimeViolation = getCurrentTimeInVideoAsString(fFrameRate, index);
-						handleViolation(img, rectRange, this->fScaleRatio, trackedCar, strTimeViolation, camInfo, VEHICLE_CAR, LANE_VIOLATION, taskQueue);
+						handleViolation(img, rectRange, this->fScaleRatio, trackedCar, strTimeViolation, camInfo, VEHICLE_CAR, LANE_VIOLATION);
 					}
 
 					//mark car violation
@@ -242,7 +240,7 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 			carVolatingAreas.clear();*/
 		} else {
 			if (bDebug) {
-				std::string status = "Modeling background...";
+				std::string status = "Preprocessing...";
 				putText(imgOverlay, status, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255), 2, 8, false);
 				//
 				resize(imgOverlay, imgOverlay, Size(imgOverlay.cols / 2, imgOverlay.rows / 2));
@@ -251,11 +249,11 @@ void FTSLaneViolation::operator()(FTSCamera camInfo, std::queue<ViolationEvent>&
 			}
 		}
 
-		if (bDebug && cv::waitKey(1) == 27)
+		if (bDebug && cv::waitKey(10) == 27)
 			break;
 
 		index++;
-		if (index == UINT_MAX) //trungnt1 add to avoid overflow
+		if(index == INT_MAX) //trungnt1 add to avoid overflow
 			index = 0;
 	}
 }
@@ -269,7 +267,7 @@ void FTSLaneViolation::read(const cv::FileNode& fn) {
 	//read anpr param file
 	cv::FileStorage fs(this->strAnprParamFile, cv::FileStorage::READ);
 	if (fs.isOpened()) {
-		this->anpr.read(fs.root());
+		//this->anpr.read(fs.root());
 		fs.release();
 	}
 }

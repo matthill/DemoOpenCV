@@ -41,7 +41,7 @@ struct Line
 #define DEFAULT_POSTPROCESSDEBUG true
 
 #define DEFAULT_LPD_SCALEFACTOR 1.2f
-#define DEFAULT_LPD_MINNEIGHBOR 4
+#define DEFAULT_LPD_MINNEIGHBOR 3
 #define DEFAULT_LPD_MINPLATEWIDTH 40
 #define DEFAULT_LPD_MINPLATEHEIGHT 21
 #define DEFAULT_LPD_MAXPLATEWIDTH 250
@@ -96,6 +96,12 @@ enum FTS_ANPR_ERRCODE
 	ANPR_ERR_OCR_SUCCESS
 }; 
 
+enum FTS_ANPR_LOCALE
+{
+    ANPR_LOCALE_VN = 0,
+    ANPR_LOCALE_AU
+};
+
 struct FTS_ANPR_API AnprParams
 {
 	float m_fLPDScaleFactor;			//scale factor used in cascade.detectmultiscale
@@ -125,6 +131,9 @@ struct FTS_ANPR_API AnprParams
 	int nExpandBottom;
 	int nExpandLeft;
 	int nExpandRight;
+
+	// DV: 21/07/2014 - Region
+	int nLocale;
 
 	AnprParams();
 	void operator=(const AnprParams& src);
@@ -229,7 +238,8 @@ public:
 					int iMinCharConf = 40,
 					int iConfSkipCharLevel = 60,
 					int iMaxSubstitutions = 3,
-					bool bPostProcessDebug = true);
+					bool bPostProcessDebug = true,
+					bool bEnableDetection = true);
 
 	bool setParamsExpert(const AnprParams& params);
 
@@ -237,8 +247,8 @@ public:
 	
 	bool initEngine();
 
-    int recognize(std::string filepath, std::vector<AlprResult>& result);
-    int recognize(const cv::Mat& oSrc, std::vector<AlprResult>& result);
+	int recognize(std::string filepath, std::vector<AlprResult>& result);
+	int recognize(const cv::Mat& oSrc, std::vector<AlprResult>& result);
 
     std::string toJson(const std::vector<AlprResult> results);
 
@@ -313,6 +323,120 @@ private:
 	FTS_IP_Util::ExpandByPixels plateExpand;
 
 private:
+
+	bool findAllBlobsIfNotDone( const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oInputBlobs,
+							    const cv::Mat& oSrc,
+							    const cv::Mat& oMask,
+							    const bool bSingleLine,
+							    const int nPaddedBorder,
+							    const int nMaxNbrOfChar,
+							    FTS_ANPR_OBJECT& oAnprObject,
+							    vector<Mat>& oBinaryImages,
+							    FTS_IP_SimpleBlobDetector& myBlobDetector,
+							    vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
+	bool refineBlobsInRange( const cv::Mat& oSrc,
+						     const int nInputMinX,		// soft bound by cropping
+						     const int nInputMaxX,		// soft bound by cropping
+						     const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+						     const bool bUseLocalOtsu,
+						     const int nThresholdType,
+						     const int nPaddedBorder,
+						     const Mat oLocalOtsuSubstitue,
+						     const int nMinMedianWidth,
+							 const int nMinMedianHeight,
+						     const float rMinWoH,
+						     const float rMaxWoH,
+						     FTS_ANPR_OBJECT& oAnprObject,
+						     vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oBlobsWithinCroppedXRange,
+						     int& nValidMinX,
+						     int& nValidMaxX);
+
+	void findPlateBoundaries( const cv::Mat& oSrc,
+						      const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& oBlobs,
+						      const int nMinArrSize,
+						      const int nValidMinX,
+						      const int nValidMaxX,
+						      FTS_IP_SimpleBlobDetector& myBlobDetector,
+						      FTS_ANPR_OBJECT& oAnprObject,
+						      FTS_BASE_LineSegment& oTopLine,
+						      FTS_BASE_LineSegment& oBottomLine,
+						      Mat& oTBLinesMask );
+
+	bool findBlobsByVerticalProjection( const cv::Mat& oSrc,
+									    const int nPaddedBorder,
+									    const int nMinMedianWidth,
+									    const float rMinWoH,
+									    const float rMaxWoH,
+									    const Mat& oTBLinesMask,
+									    const FTS_BASE_LineSegment& oTopLine,
+									    const FTS_BASE_LineSegment& oBottomLine,
+									    FTS_ANPR_OBJECT& oAnprObject,
+									    vector<Mat>& oBinaryImages,
+									    FTS_IP_SimpleBlobDetector& myBlobDetector,
+									    vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+									    FTS_IP_VerticalHistogram& oVertHist );
+
+	void mergeSplitBlobs( const cv::Mat& oSrc,
+					      const int nMinMedianWidth,
+					      const float rMinWoH,
+					      const float rMaxWoH,
+					      const FTS_BASE_LineSegment& oTopLine,
+					      const FTS_BASE_LineSegment& oBottomLine,
+					      const FTS_IP_VerticalHistogram& oVertHist,
+					      FTS_ANPR_OBJECT& oAnprObject,
+					      FTS_IP_SimpleBlobDetector& myBlobDetector,
+					      vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
+
+	bool refineBlobsBySize( const cv::Mat& oSrc,
+							const int nMinMedianWidth,
+							const float rMinWoH,
+							const float rMaxWoH,
+							const bool bUseLocalOtsu,
+							const int nThresholdType,
+							const Mat& oMask,
+							const Mat& oLocalOtsuSubstitue,
+							FTS_ANPR_OBJECT& oAnprObject,
+							FTS_IP_SimpleBlobDetector& myBlobDetector,
+							vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
+
+	void removeNoisesByOtsu( const cv::Mat& oSrc,
+							 const bool bUseLocalOtsu,
+							 const int nThresholdType,
+							 const int nMaxNbrOfChar,
+							 FTS_ANPR_OBJECT& oAnprObject,
+							 vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
+
+	bool refineBlobsByHeuristic( const cv::Mat& oSrc,
+								 const int nPaddedBorder,
+								 const bool bUseLocalOtsu,
+								 const int nThresholdType,
+								 const int nMinMedianWidth,
+								 const float rMinWoH,
+								 const float rMaxWoH,
+								 const Mat& oLocalOtsuSubstitue,
+								 const vector<Mat>& oBinaryImages,
+								 const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+								 FTS_ANPR_OBJECT& oAnprObject,
+								 FTS_IP_SimpleBlobDetector& myBlobDetector,
+								 vector<Rect>& newBestCharBoxes,
+								 vector<Mat>& oMaskBinaries );
+
+	void finalizeBinImagesForOCR( const vector<Mat>& oMaskBinaries,
+								  const vector<Mat>& oBinaryImages,
+								  const bool bUseLocalOtsu,
+								  FTS_ANPR_OBJECT& oAnprObject );
+
+	void fixVietnamTopLineBlobs( const int nMaxNbrOfChar,
+								 FTS_ANPR_OBJECT& oAnprObject,
+								 vector< vector<Rect> >& charRegionsFinal2D );
+
+	vector< vector<Rect> >  removeNoisesAcrossBinaryImages( const vector<Mat> & oBestBinImages,
+															const vector<Rect>& oBestCharBoxes,
+															FTS_ANPR_OBJECT& oAnprObject );
+
+	void storeFinalBlobs( const vector< vector<Rect> >& charRegionsFinal2D,
+						  FTS_ANPR_OBJECT& oAnprObject );
+
 	bool doSegment( const cv::Mat& oSrc,
 				    const cv::Mat& oMask,
 				    const bool bSingleLine,
@@ -381,6 +505,8 @@ private:
 					   const std::vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
 
 	void removeNoisyBlobs( std::vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
+	void moveNoisyBlobs( vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
+						 vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& reservedNoisyBlobs );
 	int countValidBlobs( const vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs );
 	void blobs2Rects( const std::vector<FTS_IP_SimpleBlobDetector::SimpleBlob>& blobs,
 			std::vector<Rect> & rects,

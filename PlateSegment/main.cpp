@@ -1,18 +1,18 @@
 
-#include "fts_anpr_cropper.h"
-#include "fts_anpr_nlcut.h"
+//#include "fts_anpr_cropper.h"
+//#include "fts_anpr_nlcut.h"
 #include "fts_anpr_util.h"
-#include "fts_anpr_seg.h"
-#include "fts_anpr_rotate.h"
-#include "fts_ip_simpleblobdetector.h"
-#include "fts_anpr_pcaocr.h"
+//#include "fts_anpr_seg.h"
+//#include "fts_anpr_rotate.h"
+//#include "fts_ip_simpleblobdetector.h"
+//#include "fts_anpr_pcaocr.h"
 
-#include "fts_base_util.h"
-#include "fts_ip_util.h"
+//#include "fts_base_util.h"
+//#include "fts_ip_util.h"
 
-#include "fts_gui_displayimage.h"
+//#include "fts_gui_displayimage.h"
 
-#include "fts_anpr_object.h"
+//#include "fts_anpr_object.h"
 //#include "direct.h"
 #ifdef WIN32
 #include "dirent.h"
@@ -55,7 +55,6 @@
 //}
 //#endif
 //int index = 0;
-
 
 
 bool bBlackChar = true;
@@ -182,13 +181,14 @@ void testBlobDetector()
 	params.useAdaptiveThreshold = false;
 	params.nbrOfthresholds = 5;
 
-	params.nExpandTop = 20;
-	params.nExpandBottom = 0;
+	params.nExpandTop = 10;
+	params.nExpandBottom = 10;
 	params.nExpandLeft = 10;
 	params.nExpandRight = 10;
 	
 	pEngine->setParamsExpert(params);
 	//
+	pEngine->setRunPlateDetect(false);	//Run plate detect or ot depends on input source
 	pEngine->setDebugMode(m_bDebug, m_bDelayOnFrame, m_bDisplayDbgImg);
 	pEngine->setLogMode(m_iLogLevel, "");
 	pEngine->initEngine();
@@ -200,7 +200,7 @@ void testBlobDetector()
 	//string sRootPath = "c:\\temp\\testcrop\\ShortLPs_Cropped2\\";
 	//string sRootPath = "C:\\temp\\testcrop\\2RowPlateImages\\";
 	//string sRootPath = "C:\\temp\\testcrop\\MTDataCropPlate\\";
-	string sRootPath = "c:\\temp\\testcrop\\PLATE_CANTHO\\PLATE\\";
+	string sRootPath = "c:\\temp\\testcrop\\PLATE_CANTHO\\111_SEGMENTFAILED\\";
 #endif
 	std::vector<std::string> validExtensions;
 	validExtensions.clear();
@@ -237,6 +237,9 @@ void testBlobDetector()
 		time(&timer);
 
 		vector<AlprResult> result;
+		//
+		//equalizeHist( oSrc, oSrc ); //17.07 Trungnt1 try using equalize histograms
+		//
 		int nLPRRes = pEngine->recognize(oSrc, result);
 		printf( "Done processing %s - Error code = %d\n", files[i].c_str(), nLPRRes );
 		for( size_t j = 0; j < result.size(); j++)
@@ -246,7 +249,7 @@ void testBlobDetector()
 #ifndef WIN32
 			result[j].outputDebugInfo("/home/sensen/data/debug/","CAM-001",timer,buff);
 #else
-			result[j].outputDebugInfo("c:\\temp\\output\\","CAM-001",timer,buff);
+			result[j].outputDebugInfo("c:\\temp\\output\\","IMG_CAM-111_SEGMENTFAILED_EQUALHIST",timer,buff);
 #endif
 
 			//++27.06 trung add code to out char segment if enabled

@@ -1,7 +1,7 @@
 #include "ConnectedComponent.h"
 #include "CVUtil.h"
 
-#if _MSC_VER <= 1600
+#if _MSC_VER <= 1700
 #include "util.h"
 #endif
 
@@ -20,6 +20,10 @@ void ListConnectComponent::clear() {
 	listCenters.clear();
 	listAreas.clear();
 	listBbs.clear();
+}
+void ListConnectComponent::setTransformationParameter(cv::Point _translation, float _fScaleRatio){
+	translation = _translation;
+	fScaleRatio = _fScaleRatio;
 }
 
 std::vector<cv::Point2d>& ListConnectComponent::getListCenter() {
@@ -99,7 +103,6 @@ void ListConnectComponent::detectLaneViolationVehicles(const cv::Mat &laneMap, i
 }
 void ListConnectComponent::detectLaneViolationVehicles(const Line_<double>& lineLane, CTracker &tracker, int iMinSize, int iMaxSize, ListConnectComponent &ccLaneViolation) {
 	for (size_t i = 0; i < tracker.tracks.size(); i++) {
-
 		// Igore caught tracks
 
 		size_t traceLength = tracker.tracks[i]->trace.size();
@@ -108,12 +111,37 @@ void ListConnectComponent::detectLaneViolationVehicles(const Line_<double>& line
 			continue;
 		}
 		bool isIntersect = checkSegmentsIntersection(lineLane.start, lineLane.end, tracker.tracks[i]->trace[0], tracker.tracks[i]->trace[traceLength - 1]);
-		if (true) {
+		if (isIntersect) {
 			int vehicleID = tracker.assignment[i];
 			if (vehicleID > -1) {
 				int conArea = listAreas[vehicleID];
-				ccLaneViolation.push_back(listCenters[vehicleID], listAreas[vehicleID], listBbs[vehicleID]);
+				if (conArea > iMinSize && conArea <= iMaxSize) {
+					ccLaneViolation.push_back(listCenters[vehicleID], listAreas[vehicleID], listBbs[vehicleID]);
+				}
 			}
 		}
+	}
+}
+
+void ListConnectComponent::getOriginalObject(int index, cv::Rect& object){
+	if (index < 0 && index >= listBbs.size())
+		return;
+	object.x = int ((listBbs[index].x + translation.x) / fScaleRatio);
+	object.y = int ((listBbs[index].y + translation.y) / fScaleRatio);
+	object.width = int (listBbs[index].width / fScaleRatio);
+	object.height = int (listBbs[index].height / fScaleRatio);
+
+}
+
+void ListConnectComponent::getListOriginalObjects(std::vector<cv::Rect>& objects){
+	objects.clear();
+	cv::Rect bB;
+	for (size_t i = 0; i < listBbs.size(); i++)
+	{
+		bB.x = int( (listBbs[i].x + translation.x) / fScaleRatio );
+		bB.y = int((listBbs[i].y + translation.y) / fScaleRatio);
+		bB.width = int(listBbs[i].width / fScaleRatio);
+		bB.height = int(listBbs[i].height / fScaleRatio);
+		objects.push_back(bB);
 	}
 }

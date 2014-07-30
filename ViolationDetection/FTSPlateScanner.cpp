@@ -1,10 +1,10 @@
 #include "CVUtil.h"
-#include "FTSLaneViolationRegion.h"
+#include "FTSPlateScanner.h"
 #include "OpticalFlowTracker.h"
 
-void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
+void FTSPlateScanner::operator()(FTSCamera camInfo) {
 	cv::Mat img, imgFrame, imgBack, imgFore, imgRoiWhole, imgOverlay;
-	cv::Mat imgRoiCar, imgRoiBike, bikeLaneMap, carLaneMap;
+	cv::Mat vehicleLaneMap;
 	std::vector< std::vector<cv::Point> > vContours;
 	cv::Rect rectRange;
 
@@ -25,7 +25,7 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 	int iFrameHeight = (int) (video.get(CV_CAP_PROP_FRAME_HEIGHT) * this->fScaleRatio);
 	float fFrameRate = (float) video.get(CV_CAP_PROP_FPS);
 
-	ListConnectComponent ccObjs, ccBikeLaneViolation, ccCarLaneViolation;
+	ListConnectComponent ccObjs, ccVehicleLane;
 
 	cv::Size subPixWinSize(30, 30);
 
@@ -45,32 +45,20 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 	imgRoiWhole = img(rectRange);
 	unsigned int iRoiArea = cv::countNonZero(imgRoiWhole);
 
-	//Read Car ROI img
-	img = cv::imread(this->strRoiCarImg, CV_LOAD_IMAGE_GRAYSCALE);
-	if (img.empty()) {
-		if (bDebug)
-			cout << "ROI Car Image's missing" << endl;
-		return;
-	}
-	cv::resize(img, img, cv::Size(iFrameWidth, iFrameHeight));
-	imgRoiCar = img(rectRange);
-
-	//Read Bike ROI img
-	img = cv::imread(this->strRoiBikeImg, CV_LOAD_IMAGE_GRAYSCALE);
+	//Read Vehicle ROI img
+	img = cv::imread(this->strRoiVehicleImg, CV_LOAD_IMAGE_GRAYSCALE);
 	if (img.empty()) {
 		if (bDebug)
 			cout << "ROI Bike Image's missing" << endl;
 		return;
 	}
 	cv::resize(img, img, cv::Size(iFrameWidth, iFrameHeight));
-	imgRoiBike = img(rectRange);
-	OpticalFlowTracker oft_carTracker, oft_bikeTracker;
+	vehicleLaneMap = img(rectRange);
 	cv::Mat imgGrayFrame;
-#ifdef TUNING_LANE_VIOLATION
-	ofstream out_carLane, out_bikeLane;
-	out_carLane.open("Tunning_CarLane.csv");
-	out_bikeLane.open("Tunning_bikeLane.csv");
-#endif //TUNING_LANE_VIOLATION
+#ifdef TUNNING_PLATE_SCANNER
+	ofstream out_vehicleLane;
+	out_vehicleLane.open("Tunning_vehicleLane.csv");
+#endif //TUNNING_PLATE_SCANNER
 	//setup background subtraction
 	cv::BackgroundSubtractorMOG2 bg(this->iHistory, this->fVarThreshold, true);
 	bg.set("nmixtures", 3);
@@ -79,31 +67,19 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 	unsigned int num_group_frame = (int) (fFrameRate * this->iInterval);
 
 	//Re-calculate min, max size after scaled
-	int calMinSize, calMaxSize, calMinBikeSize, calMaxBikeSize, calMinCarSize, calMaxCarSize;
+	int calMinSize, calMaxSize;
 	if (!this->bHardThreshold) {
 		calMinSize = int(this->iContourMinArea * this->fScaleRatio * this->fScaleRatio);
 		calMaxSize = int(this->iContourMaxArea * this->fScaleRatio * this->fScaleRatio);
-		calMinBikeSize = int(this->iBikeMinSize * this->fScaleRatio * this->fScaleRatio);
-		calMaxBikeSize = int(this->iBikeMaxSize * this->fScaleRatio * this->fScaleRatio);
-		calMinCarSize = int(this->iCarMinSize * this->fScaleRatio * this->fScaleRatio);
-		calMaxCarSize = int(this->iCarMaxSize * this->fScaleRatio * this->fScaleRatio);
 	} else {
 		calMinSize = this->iContourMinArea;
 		calMaxSize = this->iContourMaxArea;
-		calMinBikeSize = this->iBikeMinSize;
-		calMaxBikeSize = this->iBikeMaxSize;
-		calMinCarSize = this->iCarMinSize;
-		calMaxCarSize = this->iCarMaxSize;
 	}
 
 	if (bDebug) {
 		stringstream ss;
 		ss << "calMinSize=" << calMinSize 
-			<< ",calMaxSize=" << calMaxSize 
-			<< ",calMinBikeSize=" << calMinBikeSize
-			<< ",calMaxBikeSize=" << calMaxBikeSize
-			<< ",calMinCarSize=" << calMinCarSize
-			<< ",calMaxCarSize=" << calMaxCarSize << endl;
+			<< ",calMaxSize=" << calMaxSize  << endl;
 		std::cout << ss.str();
 		BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_INFO) << ss.str();
 	}
@@ -112,17 +88,16 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 	float list_values[5] = {0, 1, 2, 3, 4};
 
 	//init tracker for bike and car
-	CTracker bikeTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
-	CTracker carTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
+	CTracker vehicleTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
 	int numNonData = 0;
 	int index = 0;
 	//bikeLaneMap = imgFore.mul(imgRoiBike);
 	//carLaneMap = imgFore.mul(imgRoiCar);
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 	ofstream out_log_stream;
-	out_log_stream.open("MEASURE_TIME_LANEVIOLATIONREGION.log");
+	out_log_stream.open("MEASURE_TIME_PLATE_SCANNER.log");
 	std::string strMeasureTimeBuffer;
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
+#endif //MEASURE_TIME_PLATE_SCANNER
 	for (; video.read(img);) {
 		BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_TRACE) << "Frame " << index;
 		if (!img.data) {
@@ -137,18 +112,18 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 		cv::resize(img, imgFrame, cv::Size(iFrameWidth, iFrameHeight));
 		imgFrame = imgFrame(rectRange);
 		cv::cvtColor(imgFrame, imgGrayFrame, CV_BGR2GRAY);
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 		clock_t t;
 		t = clock();
-#endif//MEASURE_TIME_LANEVIOLATIONREGION
+#endif//MEASURE_TIME_PLATE_SCANNER
 		bg(imgFrame, imgFore, fLearningRate);
 		cv::threshold(imgFore, imgFore, 200, 255, CV_THRESH_BINARY);
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 		t = clock() - t;
 		strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process background substraction: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
 		out_log_stream << strMeasureTimeBuffer;
 		//std::cout << strMeasureTimeBuffer ;
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
+#endif //MEASURE_TIME_PLATE_SCANNER
 		//Display image on screen for debug
 		if (bDebug) {
 			imgFrame.copyTo(imgOverlay);
@@ -162,40 +137,39 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 
 			imgFore = imgFore.mul(imgRoiWhole);
 
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 			t = clock();
-#endif//MEASURE_TIME_LANEVIOLATIONREGION
+#endif//MEASURE_TIME_PLATE_SCANNER
 			cv::findContours(imgFore, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 			examineContours(vContours, calMinSize, calMaxSize);
 			ccObjs.extractConnectedComponentsFormContours(vContours);
 
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 			t = clock() - t;
 			strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process detect vehicle: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
 			out_log_stream << strMeasureTimeBuffer;
 			//std::cout << strMeasureTimeBuffer ;
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
+#endif //MEASURE_TIME_PLATE_SCANNER
 
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 			t = clock();
-#endif//MEASURE_TIME_LANEVIOLATIONREGION
-			ccObjs.detectLaneViolationVehicles(imgRoiBike, calMinBikeSize, calMaxBikeSize, ccBikeLaneViolation);
-			//oft_bikeTracker.Update(imgGrayFrame, ccBikeLaneViolation);
-#ifdef TUNING_LANE_VIOLATION
-			for (size_t i = 0; i < ccBikeLaneViolation.getSize(); i++)
+#endif//MEASURE_TIME_PLATE_SCANNER
+			ccObjs.detectLaneViolationVehicles(vehicleLaneMap, calMinSize, calMaxSize, ccVehicleLane);
+#ifdef TUNNING_PLATE_SCANNER
+			for (size_t i = 0; i < ccVehicleLane.getSize(); i++)
 			{
-				out_bikeLane << ccBikeLaneViolation.getListArea()[i] << "," << std::endl;
+				out_vehicleLane << ccVehicleLane.getListArea()[i] << "," << std::endl;
 			}
-#endif //TUNING_LANE_VIOLATION
-			std::vector<cv::Rect> trackedBike = trackVehicle(bikeTracker, ccBikeLaneViolation.getListBoundingBox(),
-				ccBikeLaneViolation.getListCenter());
-			if (ccBikeLaneViolation.getSize() > 0) {
+#endif //TUNNING_PLATE_SCANNER
+			std::vector<cv::Rect> trackedBike = trackVehicle(vehicleTracker, ccVehicleLane.getListBoundingBox(),
+				ccVehicleLane.getListCenter());
+			if (ccVehicleLane.getSize() > 0) {
 				if (trackedBike.size() > 0) {
 					BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_INFO) << "Found Lane Violation - Bike Type";
 					std::string strTimeViolation = "";
 					if (camInfo.strVideoSrc.length() > 0)
 						strTimeViolation = getCurrentTimeInVideoAsString(fFrameRate, index);
-					handleViolation(img, rectRange, this->fScaleRatio, trackedBike, strTimeViolation, camInfo, VEHICLE_BIKE, LANE_VIOLATION);
+					handleViolation(img, rectRange, this->fScaleRatio, trackedBike, strTimeViolation, camInfo, VEHICLE_UNDECIDED, PLATE_SCANNER);
 				}
 
 				//mark bike violation
@@ -207,54 +181,12 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 				}
 			}
 
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 			t = clock() - t;
 			strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process detect violation on bike lane: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
 			out_log_stream << strMeasureTimeBuffer;
 			//std::cout << strMeasureTimeBuffer ;
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
-
-
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
-			t = clock();
-#endif//MEASURE_TIME_LANEVIOLATIONREGION
-			//detect car violation
-			ccObjs.detectLaneViolationVehicles(imgRoiCar, calMinCarSize, calMaxCarSize, ccCarLaneViolation, true);
-#ifdef TUNING_LANE_VIOLATION
-			for (size_t i = 0; i < ccCarLaneViolation.getSize(); i++)
-			{
-				out_carLane << ccCarLaneViolation.getListArea()[i] << "," << std::endl;
-			}
-#endif //TUNING_LANE_VIOLATION
-			//oft_carTracker.Update(imgGrayFrame, ccCarLaneViolation);
-			std::vector<cv::Rect> trackedCar = trackVehicle(carTracker, ccCarLaneViolation.getListBoundingBox(),
-				ccCarLaneViolation.getListCenter());
-			if (ccCarLaneViolation.getSize() > 0) {
-
-				if (trackedCar.size() > 0) {
-					BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_INFO) << "Found Lane Violation - Car Type";
-					std::string strTimeViolation = "";
-					if (camInfo.strVideoSrc != "")
-						strTimeViolation = getCurrentTimeInVideoAsString(fFrameRate, index);
-					handleViolation(img, rectRange, this->fScaleRatio, trackedCar, strTimeViolation, camInfo, VEHICLE_CAR, LANE_VIOLATION);
-
-				}
-
-				//mark car violation
-				if (bDebug) {
-					for (int i = 0; i < trackedCar.size(); i++) {
-						//cout << trackedCar[i] << endl;
-						cv::rectangle(imgOverlay, trackedCar[i], cv::Scalar(255, 255, 0), 2);
-					}
-				}
-			}
-
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
-			t = clock() - t;
-			strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process detect violation on car lane: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
-			out_log_stream << strMeasureTimeBuffer;
-			//std::cout << strMeasureTimeBuffer;
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
+#endif //MEASURE_TIME_PLATE_SCANNER
 
 			// START - Recalculate learning rate base on occupied ratio
 			float fOccupiedSpace = (float) (cv::countNonZero(imgFore) * 100) / iRoiArea;
@@ -272,8 +204,7 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 			//debug case - display image
 			if (bDebug) {
 				if (ccObjs.getSize() > 0) {
-					overlayContourAreas(imgOverlay, imgRoiBike, ccObjs.getListCenter(), ccObjs.getListArea());
-					overlayContourAreas(imgOverlay, imgRoiCar, ccObjs.getListCenter(), ccObjs.getListArea());
+					overlayContourAreas(imgOverlay, vehicleLaneMap, ccObjs.getListCenter(), ccObjs.getListArea());
 				}
 				char status[100];
 				sprintf(status, "%d\nStatus: %s (%.1f %%)", index, density.c_str(), mean_density);
@@ -283,12 +214,10 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 
 				cv::findContours(imgRoiWhole, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 				cv::drawContours(imgOverlay, vContours, -1, cv::Scalar(0, 0, 255), 1);
-				cv::findContours(imgRoiCar, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+				cv::findContours(vehicleLaneMap, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 				cv::drawContours(imgOverlay, vContours, -1, cv::Scalar(0, 0, 255), 1);
-				cv::findContours(imgRoiBike, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 				cv::drawContours(imgOverlay, vContours, -1, cv::Scalar(0, 0, 255), 1);
-				bikeTracker.drawTrackToImage(imgOverlay);
-				carTracker.drawTrackToImage(imgOverlay);
+				vehicleTracker.drawTrackToImage(imgOverlay);
 				//
 				resize(imgOverlay, imgOverlay, Size(imgOverlay.cols / 2, imgOverlay.rows / 2));
 				//
@@ -297,8 +226,7 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 
 			//clear
 			ccObjs.clear();
-			ccBikeLaneViolation.clear();
-			ccCarLaneViolation.clear();
+			ccVehicleLane.clear();
 		} else {
 			if (bDebug) {
 				std::string status = "Preprocessing...";
@@ -317,25 +245,23 @@ void FTSLaneViolationRegion::operator()(FTSCamera camInfo) {
 		
 		if(index == INT_MAX) //trungnt1 add to avoid overflow
 			index = 0;
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 		out_log_stream << "\n";
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
+#endif //MEASURE_TIME_PLATE_SCANNER
 	}
-#ifdef MEASURE_TIME_LANEVIOLATIONREGION
+#ifdef MEASURE_TIME_PLATE_SCANNER
 	
 	out_log_stream.close();
-#endif //MEASURE_TIME_LANEVIOLATIONREGION
-#ifdef TUNING_LANE_VIOLATION
-	out_carLane.close();
-	out_bikeLane.close();
-#endif//TUNING_LANE_VIOLATION
+#endif //MEASURE_TIME_PLATE_SCANNER
+#ifdef TUNNING_PLATE_SCANNER
+	out_vehicleLane.close();
+#endif//TUNNING_PLATE_SCANNER
 }
 
-void FTSLaneViolationRegion::read(const cv::FileNode& fn) {
+void FTSPlateScanner::read(const cv::FileNode& fn) {
 	this->info()->read(this, fn);
 
-	fn["strRoiCarImg"] >> this->strRoiCarImg;
-	fn["strRoiBikeImg"] >> this->strRoiBikeImg;
+	fn["strRoiVehicleImg"] >> this->strRoiVehicleImg;
 
 	//read anpr param file
 	cv::FileStorage fs(this->strAnprParamFile, cv::FileStorage::READ);
@@ -345,15 +271,14 @@ void FTSLaneViolationRegion::read(const cv::FileNode& fn) {
 	}
 }
 
-void FTSLaneViolationRegion::write(cv::FileStorage& fs) const {
+void FTSPlateScanner::write(cv::FileStorage& fs) const {
 	this->info()->write(this, fs);
-	fs << "strRoiCarImg" << this->strRoiCarImg;
-	fs << "strRoiBikeImg" << this->strRoiBikeImg;
+	fs << "strRoiVehicleImg" << this->strRoiVehicleImg;
 }
 
 
-FTSLaneViolationRegion::FTSLaneViolationRegion() {
-	BOOST_LOG_CHANNEL_SEV(lg, FTSLaneViolationRegion::className(), LOG_INFO) << "Init";
+FTSPlateScanner::FTSPlateScanner() {
+	BOOST_LOG_CHANNEL_SEV(lg, FTSPlateScanner::className(), LOG_INFO) << "Init";
 
 	iRetryCount = 0;
 
@@ -367,11 +292,6 @@ FTSLaneViolationRegion::FTSLaneViolationRegion() {
 	this->iHistory = 10;
 	this->iTrainingFrame = 100;
 	this->iInterval = 60;
-
-	this->iBikeMinSize = 25000;
-	this->iBikeMaxSize = 30000000;
-	this->iCarMinSize = 5000;
-	this->iCarMaxSize = 20000;
 
 	this->iContourMinArea = 1500;
 	this->iContourMaxArea = 1000000;
@@ -388,4 +308,4 @@ FTSLaneViolationRegion::FTSLaneViolationRegion() {
 	this->_very_large_cost = 1000000;
 }
 
-FTSLaneViolationRegion::~FTSLaneViolationRegion() {}
+FTSPlateScanner::~FTSPlateScanner() {}

@@ -13,7 +13,9 @@
 #include "fts_base_linesegment.h"
 #include "fts_gui_displayimage.h"
 #include "fts_ip_verticalhistogram.h"
-#include "fts_anpr_object.h"
+//#include "fts_anpr_object.h"
+
+class FTS_ANPR_OBJECT;
 
 class FTS_IP_SimpleBlobDetector
 {

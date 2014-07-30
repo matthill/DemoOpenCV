@@ -1,7 +1,7 @@
-#include "FTSRedSignalViolation.h"
+#include "FTSRedSignalViolationBS.h"
 #include "CVUtil.h"
 
-bool FTSRedSignalViolation::checkRedSignal(bool isRed, const cv::Mat& redTL, Light& red_light, const cv::Mat& yelTL, Light& yel_light, const cv::Mat& grnTL, Light& grn_light) {
+bool FTSRedSignalViolationBS::checkRedSignal(bool isRed, const cv::Mat& redTL, Light& red_light, const cv::Mat& yelTL, Light& yel_light, const cv::Mat& grnTL, Light& grn_light) {
 	// Red
 	if (!isRed && red_light.isOn(redTL) && !yel_light.isOn(yelTL) && !grn_light.isOn(grnTL)) {
 		return true;
@@ -13,7 +13,7 @@ bool FTSRedSignalViolation::checkRedSignal(bool isRed, const cv::Mat& redTL, Lig
 	return isRed;
 }
 
-void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
+void FTSRedSignalViolationBS::operator() (FTSCamera camInfo) {
 	cv::Mat img, imgFrame, imgRoiWhole, rsvdImg, imgFore, imgBack, imgOverlay, imgTrafficLight, imgStopRegionImage;
 	std::vector< std::vector<cv::Point> > vContours;
 	cv::Rect rectRange;
@@ -46,8 +46,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 	imgRoiWhole = imgRoiWhole(rectRange);
 
 	//read STOP REGION ROI IMAGE
-	//imgStopRegionImage = cv::imread(this->strStopRoiImage, CV_LOAD_IMAGE_GRAYSCALE);
-	imgStopRegionImage = cv::imread(this->strRoiImg, CV_LOAD_IMAGE_GRAYSCALE);
+	imgStopRegionImage = cv::imread(this->strStopRoiImage, CV_LOAD_IMAGE_GRAYSCALE);
 	if (imgStopRegionImage.empty()){
 		if (bDebug)
 			std::cout << "STOP REGION IMAGE's missing" << std::endl;
@@ -84,13 +83,10 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 	unsigned int roi_area = countPixels(imgStopRegionImage, 0);
 
 	// Tracking
-	std::vector<cv::Rect>  violatingVehicleBbs, plateVehicleBbs;
-	std::vector<cv::Mat>   violatingVehiclePlates;
+	std::vector<cv::Rect>  violatingVehicleBbs;
 	//std::vector<cv::Point2d> potentialViolatingCenters;
 
 	ListConnectComponent ccObjs;
-	ListConnectComponent ccObjPlates;
-	ccObjPlates.setTransformationParameter(rectRange.tl(), this->fScaleRatio);
 
 	cv::Size subPixWinSize(30, 30);
 	cv::TermCriteria termcrit(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 5, 0.3);
@@ -106,7 +102,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 		calMaxSize = int(this->iContourMaxArea * this->fScaleRatio * this->fScaleRatio);
 	}
 	// Tracking initialize
-	//CTracker tracker(0.2f, 0.5f, 120.0f, 0, 10, 10, 1000000);
+	//CTracker tracker(0.2f, 0.5f, 40.0f, 0, 10, 10, 1000000);
 	CTracker suspectsTracker(_dt, _Accel_noise_mag, _dist_thres, _cos_thres, _maximum_allowed_skipped_frames, _max_trace_length, _very_large_cost);
 	std::vector<int> trackVehMap;
 	std::vector<int> trackIndices;
@@ -126,7 +122,6 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 	int index = 0;
 
 	bool bRed = false;
-	
 #ifdef MEASURE_TIME_REDLIGHT
 	ofstream out_log_stream;
 	out_log_stream.open("MEASURE_TIME_REDLIGHT.log");
@@ -188,23 +183,6 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 			examineContours(vContours, calMinSize, calMaxSize);
 
 			ccObjs.extractConnectedComponentsFormContours(vContours);
-			
-			for (size_t i = 0; i < ccObjs.getSize(); i++)
-			{
-				std::vector<cv::Rect> detection_bbs;
-				cv::Rect bbs = ccObjs.getListBoundingBox()[i];
-				cv::Mat imgBuff = imgFrame(bbs);
-				this->cascade.detectMultiScale(imgBuff, detection_bbs, 1.05, 2, 0, cv::Size(5, 5), cv::Size(60, 60));
-				for (size_t j = 0; j < detection_bbs.size(); j++)
-				{
-					detection_bbs[j].x += bbs.x;
-					detection_bbs[j].y += bbs.y;
-					cv::Point2d point = detection_bbs[j].tl() + detection_bbs[j].br();
-					point = cv::Point2d(point.x / 2, point.y / 2);
-					
-					ccObjPlates.push_back(point, detection_bbs[j].area(), detection_bbs[j]);
-				}
-			}
 #ifdef MEASURE_TIME_REDLIGHT
 			t = clock() - t;
 			strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process detect component: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
@@ -219,15 +197,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 #ifdef MEASURE_TIME_REDLIGHT
 			t = clock();
 #endif//MEASURE_TIME_REDLIGHT
-			if (ccObjPlates.getSize() > 0){
-				suspectsTracker.Update(ccObjPlates.getListCenter());
-				std::vector<cv::Rect> listOriginalObjects;
-				ccObjPlates.getListOriginalObjects(listOriginalObjects);
-				suspectsTracker.setPlateForTrackers(img, listOriginalObjects);
-			}else
-				suspectsTracker.updateSkipedSkippedFrames();
-			
-
+			suspectsTracker.Update(ccObjs.getListCenter());
 #ifdef MEASURE_TIME_REDLIGHT
 			t = clock() - t;
 			strMeasureTimeBuffer = "Frame " + std::to_string(index) + " Time process tracking: " + std::to_string(((float)t) / CLOCKS_PER_SEC) + "\n";
@@ -237,8 +207,11 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 			if (bDebug) {
 				//std::cout << suspectsTracker.tracks.size() << endl;
 				suspectsTracker.drawTrackToImage(imgFrame);
-				for (int i = 0; i < ccObjPlates.getSize(); i++) {
-					circle(imgFrame, ccObjPlates.getListCenter()[i], 3, Scalar(0, 255, 0), 2, CV_AA);
+			}
+
+			if (bDebug) {
+				for (int i = 0; i < ccObjs.getSize(); i++) {
+					circle(imgFrame, ccObjs.getListCenter()[i], 3, Scalar(0, 255, 0), 2, CV_AA);
 				}
 				std::cout << "Num of tracks: " << suspectsTracker.tracks.size() << std::endl;
 			}
@@ -246,6 +219,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 
 				//detectObjsInROI(mRoiRSVImg, tracker, objBbs, potentialViolatingBbs, potentialViolatingCenters);
 				//detectObjsInROI(mRoiRSVImg, objBbs, objCenters, potentialViolatingBbs, potentialViolatingCenters);
+
 				//std::cout << "Num of potentials: " << potentialViolatingBbs.size() << std::endl;
 				
 #ifdef MEASURE_TIME_REDLIGHT
@@ -253,36 +227,21 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 #endif//MEASURE_TIME_REDLIGHT
 				//tracking violation
 
-				
+				//if (potentialViolatingBbs.size() > 0) {
 
 				// Map from indices of tracks to indices of moving objects
-				//start red light 
+
 				// Double-line mode
-				switch (detectionMode){
-				case MOVING_DIRECTION:
-					detectBasedMovingDirection(suspectsTracker, trackIndices, outLine);
-					break;
-				case CROSSING_DOUBLE_LINES:
+				if (detectionMode == 2) {
 					detectCrossingDoubleLines(suspectsTracker, trackIndices, inLine, outLine);
-					break;
-				case CROSSING_SINGLE_LINES:
-					detectCrossingSingleLines(suspectsTracker, trackIndices, outLine);
-					break;
+				} else if (detectionMode == 1) {
+					detectBasedMovingDirection(suspectsTracker, trackIndices, outLine);
 				}
-				
 				if (ccObjs.getSize() > 0){
 					for (size_t i = 0; i < trackIndices.size(); i++) {
 						int bbInd = suspectsTracker.assignment[trackIndices[i]];
 						if (bbInd > -1 && !suspectsTracker.tracks[trackIndices[i]]->isCaught) {
-							cv::Rect rectViolation = ccObjPlates.getListBoundingBox()[bbInd];
-							plateVehicleBbs.push_back(rectViolation);
-							rectViolation.y -= rectViolation.height * 3;
-							rectViolation.x -= rectViolation.width / 2;
-							rectViolation.width *= 2.5;
-							rectViolation.height *= 5;
-							violatingVehicleBbs.push_back(rectViolation);
-							violatingVehiclePlates.push_back(suspectsTracker.tracks[trackIndices[i]]->imgPlate);
-
+							violatingVehicleBbs.push_back(ccObjs.getListBoundingBox()[bbInd]);
 							suspectsTracker.tracks[trackIndices[i]]->isCaught = true;
 #ifdef TUNNING_RED_LIGHT
 							out_vehicleSize << ccObjs.getListArea()[bbInd] << "," << std::endl;
@@ -290,14 +249,23 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 						}
 					}
 				}
-				
+				/*if (bDebug) {
+					for (size_t i = 0; i < trackIndices.size(); i++)
+					{
+					int bbInd = suspectsTracker.assignment[trackIndices[i]];
+					if (bbInd > -1 && suspectsTracker.tracks[trackIndices[i]]->isCaught) {
+					cv::circle(imgFrame, objCenters[bbInd], 4, Scalar(0, 0, 255), 2, CV_AA);
+					}
+					}
+					}
+					*/
 				//handle violation
 				if (violatingVehicleBbs.size() > 0) {
 					BOOST_LOG_CHANNEL_SEV(lg, camInfo.strCameraId, LOG_INFO) << "Found Red Light Violation";
 					std::string strTimeViolation = "";
 					if (camInfo.strVideoSrc.length() > 0)
 						strTimeViolation = getCurrentTimeInVideoAsString(fFrameRate, index);
-					handleViolation(img, rectRange, this->fScaleRatio, violatingVehicleBbs, plateVehicleBbs, violatingVehiclePlates ,strTimeViolation, camInfo, VEHICLE_UNDECIDED, REDSIGNAL_VIOLATION);
+					handleViolation(img, rectRange, this->fScaleRatio, violatingVehicleBbs, strTimeViolation, camInfo, VEHICLE_UNDECIDED, REDSIGNAL_VIOLATION);
 				}
 #ifdef MEASURE_TIME_REDLIGHT
 				t = clock() - t;
@@ -332,7 +300,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 					putText(imgTrafficLight, "RED", cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2, 8, false);
 				}
 				cv::imshow("Traffic light" + camInfo.strCameraId, imgTrafficLight);
-				if (detectionMode == CROSSING_DOUBLE_LINES) {
+				if (detectionMode == 2) {
 					cv::line(imgFrame, inLine.start, inLine.end, cv::Scalar(0, 255, 255), 2);
 				}
 				cv::line(imgFrame, outLine.start, outLine.end, cv::Scalar(0, 0, 255), 2);
@@ -362,7 +330,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 				}
 				//cv::findContours(mRoiRSVImg, vContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 				//cv::drawContours(imgOverlay, vContours, -1, cv::Scalar(255, 0, 0), 1);
-				resize(imgOverlay, imgOverlay, Size(imgOverlay.cols / 2, imgOverlay.rows / 2));
+
 				cv::imshow("Overlay" + camInfo.strCameraId, imgOverlay);
 
 			}
@@ -373,9 +341,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 			ccObjs.clear();
 			violatingVehicleBbs.clear();
 			listTLChannels.clear();
-			ccObjPlates.clear();
-			violatingVehiclePlates.clear();
-			plateVehicleBbs.clear();
+
 		} else {
 			if (bRed){
 				fLearningRate = 0;
@@ -389,7 +355,6 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 
 				std::string status = "Preprocessing...";
 				putText(imgOverlay, status, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255), 2, 8, false);
-				resize(imgOverlay, imgOverlay, Size(imgOverlay.cols / 2, imgOverlay.rows / 2));
 				cv::imshow("Overlay" + camInfo.strCameraId, imgOverlay);
 			}
 		}
@@ -406,7 +371,7 @@ void FTSRedSignalViolation::operator() (FTSCamera camInfo) {
 	}
 }
 
-void FTSRedSignalViolation::read(const cv::FileNode& fn) {
+void FTSRedSignalViolationBS::read(const cv::FileNode& fn) {
 	this->info()->read(this, fn);
 
 	fn["RectLight"] >> this->rectTrafficLight;
@@ -426,7 +391,7 @@ void FTSRedSignalViolation::read(const cv::FileNode& fn) {
 	}
 }
 
-void FTSRedSignalViolation::write(cv::FileStorage& fs) const {
+void FTSRedSignalViolationBS::write(cv::FileStorage& fs) const {
 	this->info()->write(this, fs);
 
 	fs << "RectLight" << this->rectTrafficLight;
@@ -439,8 +404,8 @@ void FTSRedSignalViolation::write(cv::FileStorage& fs) const {
 	fs << "yellow" << this->lightYellow;
 }
 
-FTSRedSignalViolation::FTSRedSignalViolation() {
-	BOOST_LOG_CHANNEL_SEV(lg, FTSRedSignalViolation::className(), LOG_INFO) << "Init";
+FTSRedSignalViolationBS::FTSRedSignalViolationBS() {
+	BOOST_LOG_CHANNEL_SEV(lg, FTSRedSignalViolationBS::className(), LOG_INFO) << "Init";
 
 	iRetryCount = 0;
 
@@ -471,24 +436,18 @@ FTSRedSignalViolation::FTSRedSignalViolation() {
 	this->outLine = Line_<double>(570, 750, 1475, 700);
 
 	this->bDebug = true;
-	this->detectionMode = CROSSING_SINGLE_LINES;
+	this->detectionMode = 2;
 
 	this->bHardThreshold = true;
-	
 	//tracker params 0.2f, 0.5f, 40.f, 0, 10, 10, 1000000
 	this->_dt = 0.2f;
 	this->_Accel_noise_mag = 0.5f;
-	this->_dist_thres = 120.0f;
+	this->_dist_thres = 40.0f;
 	this->_cos_thres = 0;
 	this->_maximum_allowed_skipped_frames = 10;
 	this->_max_trace_length = 10;
 	this->_very_large_cost = 1000000;
-
-	if (!cascade.load("cascade\\cascade_lbp_24x20_3k_5k.xml"))
-	{
-		std::cout << "error loading" << std::endl;
-	} 
 }
 
 
-FTSRedSignalViolation::~FTSRedSignalViolation() {}
+FTSRedSignalViolationBS::~FTSRedSignalViolationBS() {}

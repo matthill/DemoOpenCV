@@ -1,17 +1,17 @@
 %YAML:1.0
-count: 1
+count: 2
 camera-0:
    Video: "D:\\shared\\Video\\vlc-record-2014-06-29-10h28m13s-rtsp___169.254.150.113.mp4"
    CameraID: "CAM-01"
-   Algorithm: "FTSAlgorithm.LaneViolation"
+   Algorithm: "FTSAlgorithm.LaneViolationRegion"
    ParamFile: "D:\\shared\\Video\\vlc-record-2014-06-27-18h48m19s-113.yml"
    OutputFolder: "D:\\vs2013\\output\\"
    NetMapFolder: "\\\\10.88.36.24\\output\\"
 camera-1:
-   Video: "D:\\vs2013\\sample\\VanThanh-2014-04-29.mp4"
+   Video: "D:\\shared\\Video\\vlc-record-2014-06-29-10h28m13s-rtsp___169.254.150.113.mp4"
    CameraID: "CAM-02"
-   Algorithm: "FTSAlgorithm.RedSignalViolation"
-   ParamFile: "redsignal_violation_2.yml"
+   Algorithm: "FTSAlgorithm.LaneViolationRegion"
+   ParamFile: "D:\\shared\\Video\\vlc-record-2014-06-27-18h48m19s-113.yml"
    OutputFolder: "D:\\vs2013\\output\\"
    NetMapFolder: "\\\\10.88.36.24\\output\\"
 camera-2: 
@@ -35,3 +35,45 @@ camera-4:
    ParamFile: "lane_violation_5.yml"
    OutputFolder: "D:\\vs2013\\output\\"
    NetMapFolder: "\\\\10.88.36.24\\output\\"
+anpr:
+    name: "FTSAlgorithm.ANPR"
+    bDebug: 1
+    bDelayOnFrame: 0
+    bDisplayDbgImg: 0
+    LogLevel: 4
+    RuntimeOcrDir: ".\\runtime_data\\ocr"
+    OcrLanguage: "lus"
+    PostProcessFile: ".\\runtime_data\\postprocess\\vn.patterns"
+    CascadeFile: ".\\cascade\\cascade_lbp_24x20_3k_5k.xml"
+    MinCharToProcess: 4
+    MaxCharToProcess: 9
+    MinOcrFont: 4
+    EnableOcrDebug: 1
+    MinCharConf: 40
+    ConfidenceSkipCharLevel: 75
+    MaxSubstitutions: 2
+    EnablePostProcessDebug: 1
+    LPDScaleFactor: 1.05
+    LPDMinNeighbors: 2
+    LPDMinPlateWidth: 40
+    LPDMinPlateHeight: 21
+    LPDMaxPlateWidth: 250
+    LPDMaxPlateHeight: 100
+    ExpandRectX: 50
+    ExpandRectY: 50
+    TemplatePlateWidth: 256
+    filterByArea: 0
+    filterByBBArea: 1
+    minBBArea: 35
+    maxBBArea: 2500
+    minBBHoW: 0.4
+    maxBBHoW: 10
+    minBBHRatio: 0.05
+    minDistBetweenBlobs: 4.0
+    useXDist: 0
+    useAdaptiveThreshold: 0
+    nbrOfthresholds: 5
+    nExpandTop: 20
+    nExpandBottom: 0
+    nExpandLeft: 10
+    nExpandRight: 10

@@ -62,6 +62,7 @@ void perspectiveTransform2d(const std::vector<cv::Point2d>& objCenters, std::vec
 
 void detectBasedMovingDirection(CTracker &suspectsTracker, std::vector<int> &indices, Line_<double> outLine);
 void detectCrossingDoubleLines(CTracker &tracker, std::vector<int> &indices, Line_<double> inLine, Line_<double>  outLine);
+void detectCrossingSingleLines(CTracker &tracker, std::vector<int> &indices, Line_<double>  outLine);
 bool intersectSegments(cv::Point2d o1, cv::Point2d p1, cv::Point2d o2, cv::Point2d p2, double &t1, double &t2);
 bool checkSegmentsIntersection(cv::Point2d o1, cv::Point2d p1, cv::Point2d o2, cv::Point2d p2);
 //bool intersectSegments(cv::Point2d o1, cv::Point2d p1, cv::Point2d o2, cv::Point2d p2);

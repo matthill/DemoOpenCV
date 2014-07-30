@@ -48,7 +48,7 @@ public:
 	virtual void read(const cv::FileNode& fn);
 	virtual void write(cv::FileStorage& fs) const;
 
-	virtual void operator() (FTSCamera camInfo, std::queue<ViolationEvent>& taskQueue);
+	virtual void operator() (FTSCamera camInfo);
 
 	FTSLaneViolationRegion();
 	~FTSLaneViolationRegion();

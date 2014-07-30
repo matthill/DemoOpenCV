@@ -11,7 +11,7 @@
 #include "fts_ip_util.h"
 #include <iterator>
 
-//using namespace cv;
+#include "fts_anpr_object.h"
 
 //#define DEBUG_HIST
 
@@ -457,12 +457,6 @@ void FTS_IP_SimpleBlobDetector::detectImplFTS( const cv::Mat& oSrc,
 	m_voBinarizedImages.push_back( binarizedImage1 );
 	threshVals.push_back( 0 );
 
-//	FTS_GUI_DisplayImage::ShowAndScaleBy2(
-//							"WOLFJOLION 111", binarizedImage1,
-//							FTS_GUI_DisplayImage::SCALE_X,
-//							FTS_GUI_DisplayImage::SCALE_Y,
-//							430, 200 );
-
 	k = 1;
 	win = 22;
 	Mat binarizedImage2( grayscaleImage.size(), grayscaleImage.type() );
@@ -470,12 +464,6 @@ void FTS_IP_SimpleBlobDetector::detectImplFTS( const cv::Mat& oSrc,
 	bitwise_not(binarizedImage2, binarizedImage2);
 	m_voBinarizedImages.push_back( binarizedImage2 );
 	threshVals.push_back( 0 );
-
-//	FTS_GUI_DisplayImage::ShowAndScaleBy2(
-//								"WOLFJOLION 222", binarizedImage2,
-//								FTS_GUI_DisplayImage::SCALE_X,
-//								FTS_GUI_DisplayImage::SCALE_Y,
-//								430, 300 );
 
 //	// Sauvola
 //	k = 1;
@@ -505,9 +493,6 @@ void FTS_IP_SimpleBlobDetector::detectImplFTS( const cv::Mat& oSrc,
 							   11 + 2 * i,
 							   5 );
 
-//			FTS_ANPR_Util::RemoveHorizontalLongLines( binarizedImage,
-//													  Rect( 0, 0, binarizedImage.cols, binarizedImage.rows),
-//													  (int)( binarizedImage.cols / 6 ) );
 			m_voBinarizedImages.push_back( binarizedImage );
 			threshVals.push_back( 3 + 2 * i );
 
@@ -906,10 +891,10 @@ void FTS_IP_SimpleBlobDetector::findTBLines( const Mat& oSrc,
 				   oPlateBoundingPolygon[1].x,
 				   oPlateBoundingPolygon[1].y );
 
-	oBottomLine.init( oPlateBoundingPolygon[2].x,
-					  oPlateBoundingPolygon[2].y,
-					  oPlateBoundingPolygon[3].x,
-					  oPlateBoundingPolygon[3].y );
+	oBottomLine.init( oPlateBoundingPolygon[3].x,
+					  oPlateBoundingPolygon[3].y,
+					  oPlateBoundingPolygon[2].x,
+					  oPlateBoundingPolygon[2].y );
 }
 
 bool FTS_IP_SimpleBlobDetector::isTopHalf( const vector<SimpleBlob>& oBlobs,
@@ -1266,12 +1251,20 @@ int FTS_IP_SimpleBlobDetector::findMiddleCut( const Mat& oSrc,
 			{
 				oTopBlobs    = oSameLineBlobs;
 				oBottomBlobs = oRemainingBlobs;
+
+				// DV:24/07/2014 - store the middle line
+				m_poANPRObject->middleLine.init( oBottomLine.p1.x, oBottomLine.p1.y, oBottomLine.p2.x, oBottomLine.p2.y );
 			}
 			else
 			{
 				oTopBlobs    = oRemainingBlobs;
 				oBottomBlobs = oSameLineBlobs;
+
+				// DV:24/07/2014 - store the middle line
+				m_poANPRObject->middleLine.init( oTopLine.p1.x, oTopLine.p1.y, oTopLine.p2.x, oTopLine.p2.y );
 			}
+
+
 		}
 
 		// Merge blobs from 2 lines
@@ -1286,13 +1279,6 @@ int FTS_IP_SimpleBlobDetector::findMiddleCut( const Mat& oSrc,
 		line( oColor, Point(nMinX, 0), Point(nMinX, oColor.rows-1), Scalar(0,255,255), 1 );
 		line( oColor, Point(nMaxX, 0), Point(nMaxX, oColor.rows-1), Scalar(0,255,255), 1 );
 	}
-
-	// DEBUG
-//	if(params.bDebug)
-//	{
-//		printLogInfo( "nCut = %d( 0 means the middle cut is found by the top & bottom lines detection)\n", nCut );
-//		FTS_GUI_DisplayImage::ShowAndScaleBy2( "masked", oColor, 2.0, 2.0, 300, 300 );
-//	}
 
 	m_poANPRObject->oFindMiddleCut = oColor;
 
@@ -1561,7 +1547,10 @@ vector<Rect> FTS_IP_SimpleBlobDetector::getBlobsByHist( const FTS_IP_VerticalHis
 	float rMinHistHeight = rMedianCharHeight * 0.35;	// TODO: DV: from setting?
 	float rMaxBlobWidth  = rMedianCharWidth  * 1.55;	// TODO: DV: from setting?
 
-	int pxLeniency = 2;
+	// DV: 23/07/2014 - this is a very important number because it decide how to segment
+	// the vertical projection of the binary image. If we set too low, it might miss characters
+	// if we set too high, it might split a normal character into halfs.
+	int pxLeniency = 3;	// default is 2
 
 	vector<Rect> charBoxes;
 	vector<Rect> allBoxes = get1DHits( histogram.histoImg, pxLeniency, top, bottom );
@@ -2506,7 +2495,7 @@ int FTS_IP_SimpleBlobDetector::isSameYAndClosed( const void* poSegChar1,
 }
 
 vector<Rect> FTS_IP_SimpleBlobDetector::removeEmptyBoxes( const vector<Mat>&  oBinaryImages,
-																const vector<Rect>& oBoxes)
+														  const vector<Rect>& oBoxes)
 {
 	// Of the n thresholded images, if box 3 (for example) is empty in half (for example)
 	// of the thresholded images, clear all data for every box #3.

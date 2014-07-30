@@ -8,6 +8,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
+#include "FTSANPR.h"
 
 struct FTSCamera {
 	FTSCamera() {};
@@ -54,14 +55,17 @@ static void read(const cv::FileNode& node, FTSCamera& cam, const FTSCamera& defa
 }
 
 
-static void readCameraFile(std::vector<FTSCamera>& listCams, const std::string& strParamFile) {
+static void readCameraFile(const std::string& strParamFile, std::vector<FTSCamera>& listCams, FTSANPR& anpr) {
 	cv::FileStorage fs(strParamFile, cv::FileStorage::READ);
 
 	if (fs.isOpened()) {
 		int count;
 		char buff[100];
 
+		//read number of camera
 		fs["count"] >> count;
+		
+		//read each camera info
 		for (int i = 0; i < count; i++) {
 			FTSCamera cam;
 			//_itoa_s(i, buff, 10);
@@ -69,11 +73,17 @@ static void readCameraFile(std::vector<FTSCamera>& listCams, const std::string& 
 			fs[buff] >> cam;
 			listCams.push_back(cam);
 		}
+		
+		//read anpr params
+		anpr.read(fs["anpr"]);
+		anpr.camera_count = listCams.size();
+		//fs["anpr"] >> anpr;
+
 		fs.release();
 	}
 }
 
-static void writeCameraFile(std::vector<FTSCamera> listCams, const std::string &strParamFile) {
+static void writeCameraFile(const std::string& strParamFile, const std::vector<FTSCamera> listCams, const FTSANPR anpr) {
 	cv::FileStorage fs(strParamFile, cv::FileStorage::WRITE);
 	std::string data("camera-");
 
@@ -88,6 +98,8 @@ static void writeCameraFile(std::vector<FTSCamera> listCams, const std::string &
 
 		fs << buff << listCams[i];
 	}
+
+	//fs << "anpr" << anpr;
 
 	fs.release();
 }

@@ -18,7 +18,7 @@ void drawTracks(cv::Mat& imgFrame, const CTracker& tracker) {
 	for (int i = 0; i<tracker.tracks.size(); i++) {
 		if (tracker.tracks[i]->trace.size()>1) {
 			for (int j = 0; j < tracker.tracks[i]->trace.size() - 1; j++) {
-				std::cout << "Trace " << tracker.tracks[i]->trace[j] << std::endl;
+				//std::cout << "Trace " << tracker.tracks[i]->trace[j] << std::endl;
 				line(imgFrame, tracker.tracks[i]->trace[j], tracker.tracks[i]->trace[j + 1], Colors[tracker.tracks[i]->track_id % 9], 2, CV_AA);
 			}
 		}
@@ -529,6 +529,27 @@ void detectCrossingDoubleLines(CTracker &tracker, std::vector<int> &indices, Lin
 		//	indices.push_back(i);
 		//	//tracker.tracks[i]->isCaught = true;
 		//}		
+	}
+}
+
+void detectCrossingSingleLines(CTracker &tracker, std::vector<int> &indices, Line_<double>  outLine) {
+	for (size_t i = 0; i < tracker.tracks.size(); i++) {
+		// Igore caught tracks
+
+		size_t traceLength = tracker.tracks[i]->trace.size();
+
+		if (tracker.tracks[i]->isCaught || traceLength < 3) {
+			continue;
+		}
+		bool bOut = false;
+
+		//bOut = checkCrossALine(tracker.tracks[i], outLine);
+		bOut = checkSegmentsIntersection(outLine.start, outLine.end, tracker.tracks[i]->trace[0], tracker.tracks[i]->trace[traceLength - 1]);
+		
+		if (bOut) {
+			indices.push_back(i);
+		}
+		
 	}
 }
 

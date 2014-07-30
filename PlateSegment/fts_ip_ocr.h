@@ -9,7 +9,6 @@
 #include "baseapi.h"
 using namespace tesseract;
 
-
 #define POST_PROCESS
 
 class FTS_ANPR_TessOcr

@@ -1,6 +1,11 @@
 
 #include "fts_ip_verticalhistogram.h"
 
+FTS_IP_VerticalHistogram::FTS_IP_VerticalHistogram()
+{
+	// Nothing
+}
+
 FTS_IP_VerticalHistogram::FTS_IP_VerticalHistogram(Mat inputImage, Mat mask)
 {
 	analyzeImage(inputImage, mask);

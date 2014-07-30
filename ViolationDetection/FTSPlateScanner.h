@@ -1,15 +1,12 @@
-#ifndef _FTS_LV_LANEVIOLATION_H_
-#define _FTS_LV_LANEVIOLATION_H_
+#ifndef _FTS_LV_PLATESCANNER_H_
+#define _FTS_LV_PLATESCANNER_H_
 
 #include "FTSVideoAlgorithm.h"
 #include "CVLine.h"
 
-//#define USE_LANE_MAP
-#ifndef USE_LANE_MAP
-#define USE_COUNTING_LINE
-#endif //USE_LANE_MAP
-
-class FTSLaneViolation: public FTSVideoAlgorithm {
+//#define TUNNING_PLATE_SCANNER
+//#define MEASURE_TIME_PLATE_SCANNER // calc time 
+class FTSPlateScanner: public FTSVideoAlgorithm {
 
 private:
 	cv::Size subPixWinSize;
@@ -17,6 +14,7 @@ private:
 
 protected:
 	std::string strRoiImg;
+	std::string strRoiVehicleImg;
 
 	float fVarThreshold;
 	float fMaxLearningRate;
@@ -25,13 +23,11 @@ protected:
 	int iHistory;
 	int iTrainingFrame;
 	int iInterval;
-	int iBikeMinSize;
-	int iBikeMaxSize;
-	int iCarMinSize;
-	int iCarMaxSize;
 	int iContourMinArea;
 	int iContourMaxArea;
-	
+
+	bool bHardThreshold;
+
 	//tracker params
 	float _dt;
 	float _Accel_noise_mag;
@@ -41,18 +37,16 @@ protected:
 	int _max_trace_length;
 	double _very_large_cost;
 
-	bool bHardThreshold;
-	Line_<double> lineCar, lineBike, lineTruck;
 public:
-	static std::string const className() { return "FTSLaneViolation"; }
+	static std::string const className() { return "FTSPlateScanner"; }
 	virtual cv::AlgorithmInfo* info() const;
 	virtual void read(const cv::FileNode& fn);
 	virtual void write(cv::FileStorage& fs) const;
 
 	virtual void operator() (FTSCamera camInfo);
 
-	FTSLaneViolation();
-	~FTSLaneViolation();
+	FTSPlateScanner();
+	~FTSPlateScanner();
 };
 
 #endif

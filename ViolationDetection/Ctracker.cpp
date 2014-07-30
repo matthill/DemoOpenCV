@@ -264,9 +264,22 @@ void CTracker::drawTrackToImage(cv::Mat &img)
 // ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
+void CTracker::setPlateForTrackers(const cv::Mat& originalImage, std::vector<cv::Rect> &listPlateObjs){
+	cv::Rect boundingBox;
+	for (size_t i = 0; i < assignment.size(); i++)
+	{
+		int ind = assignment[i];
+		if (ind > -1 && ind < listPlateObjs.size() && !tracks[i]->isHavePlate){
+			cv::Mat plate = originalImage(listPlateObjs[ind]).clone();
+			
+			tracks[i]->imgPlate = plate;
+			tracks[i]->isHavePlate = true;
+		}
+	}
+}
 CTracker::~CTracker(void)
 {
-	for (int i = 0; i<tracks.size(); i++)
+	for (size_t i = 0; i<tracks.size(); i++)
 	{
 		delete tracks[i];
 	}

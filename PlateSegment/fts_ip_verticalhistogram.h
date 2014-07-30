@@ -21,6 +21,7 @@ class FTS_IP_VerticalHistogram
 
   public:
 
+	FTS_IP_VerticalHistogram();
     FTS_IP_VerticalHistogram(Mat inputImage, Mat mask);
     virtual ~FTS_IP_VerticalHistogram();
 
@@ -33,13 +34,15 @@ class FTS_IP_VerticalHistogram
 
     int getHeightAt(int x) const;
 
+    void analyzeImage(Mat inputImage, Mat mask);
+
   private:
     vector<int> colHeights;
     int highestPeak;
     int lowestValley;
     vector<Valley> valleys;
 
-    void analyzeImage(Mat inputImage, Mat mask);
+
     void findValleys();
 
     int getHistogramDirection(int index);

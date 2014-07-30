@@ -87,6 +87,7 @@ public:
 	FTSANPR();
 	~FTSANPR();
 
+	int camera_count = 0;
 	vector<string> files;
 };
 
